@@ -1,0 +1,42 @@
+# Sample AddonPhase for Cilium
+# Name must match the Addon name (1:1 relationship)
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonPhase
+metadata:
+  name: cilium-infra
+spec:
+  rules:
+    # Enable TLS certificates when cert-manager is ready
+    - name: enable-certificates
+      criteria:
+        - source:
+            apiVersion: addons.in-cloud.io/v1alpha1
+            kind: Addon
+            name: cert-manager
+          jsonPath: "/status/conditions/0/status"
+          operator: Equal
+          value: "True"
+      selector:
+        name: certificates
+        priority: 20
+        matchLabels:
+          addons.in-cloud.io/addon: cilium
+          addons.in-cloud.io/feature.certificates: "true"
+
+    # Enable Hubble when explicitly configured
+    - name: enable-hubble
+      criteria:
+        - source:
+            apiVersion: v1
+            kind: ConfigMap
+            name: cluster-config
+            namespace: kube-system
+          jsonPath: "/data/enable_hubble"
+          operator: Equal
+          value: "true"
+      selector:
+        name: hubble
+        priority: 30
+        matchLabels:
+          addons.in-cloud.io/addon: cilium
+          addons.in-cloud.io/feature.hubble: "true"

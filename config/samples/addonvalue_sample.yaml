@@ -1,0 +1,58 @@
+# Sample AddonValue resources for Cilium
+
+---
+# Default values - lowest priority
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonValue
+metadata:
+  name: cilium-defaults
+  labels:
+    addons.in-cloud.io/addon: cilium
+    addons.in-cloud.io/layer: defaults
+spec:
+  values:
+    operator:
+      replicas: 1
+    ipam:
+      mode: kubernetes
+    kubeProxyReplacement: strict
+    bpf:
+      masquerade: true
+    hubble:
+      enabled: false
+
+---
+# Immutable values - highest priority, cannot be overridden
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonValue
+metadata:
+  name: cilium-immutable
+  labels:
+    addons.in-cloud.io/addon: cilium
+    addons.in-cloud.io/layer: immutable
+spec:
+  values:
+    # These values are enforced and cannot be overridden
+    cluster:
+      name: "{{ .Variables.cluster_name }}"
+    image:
+      pullPolicy: IfNotPresent
+
+---
+# Feature-specific values - activated by AddonPhase
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonValue
+metadata:
+  name: cilium-certificates
+  labels:
+    addons.in-cloud.io/addon: cilium
+    addons.in-cloud.io/feature.certificates: "true"
+spec:
+  values:
+    tls:
+      enabled: true
+      auto:
+        method: certmanager
+        certManagerIssuerRef:
+          name: letsencrypt-prod
+          kind: ClusterIssuer

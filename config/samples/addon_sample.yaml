@@ -1,0 +1,45 @@
+# Sample Addon resource for Cilium CNI
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: cilium-infra
+spec:
+  # Helm chart information
+  chart: cilium
+  repoURL: https://helm.cilium.io/
+  version: "1.14.5"
+
+  # Deployment target
+  targetCluster: in-cluster
+  targetNamespace: kube-system
+
+  # Argo CD backend configuration
+  backend:
+    type: argocd
+    namespace: argocd
+    project: infrastructure
+    syncPolicy:
+      automated:
+        prune: true
+        selfHeal: true
+
+  # Static value selectors - select AddonValue by labels
+  valuesSelectors:
+    # Base values with lowest priority
+    - name: defaults
+      priority: 0
+      matchLabels:
+        addons.in-cloud.io/addon: cilium
+        addons.in-cloud.io/layer: defaults
+
+    # Immutable values with highest priority (cannot be overridden)
+    - name: immutable
+      priority: 99
+      matchLabels:
+        addons.in-cloud.io/addon: cilium
+        addons.in-cloud.io/layer: immutable
+
+  # Template variables accessible in AddonValue
+  variables:
+    cluster_name: production
+    environment: prod
