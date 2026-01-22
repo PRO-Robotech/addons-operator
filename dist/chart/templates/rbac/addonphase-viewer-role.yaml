@@ -1,0 +1,24 @@
+{{- if .Values.rbacHelpers.enable }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+    labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service }}
+        app.kubernetes.io/name: addon-operator
+    name: addon-operator-addonphase-viewer-role
+rules:
+    - apiGroups:
+        - addons.in-cloud.io
+      resources:
+        - addonphases
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
+        - addons.in-cloud.io
+      resources:
+        - addonphases/status
+      verbs:
+        - get
+{{- end }}
