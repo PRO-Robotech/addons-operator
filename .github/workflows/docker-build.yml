@@ -64,8 +64,8 @@ jobs:
           provenance: false
           platforms: linux/amd64
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
@@ -130,7 +130,7 @@ jobs:
   #         provenance: false
   #         platforms: linux/arm64
   #         tags: |
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:arm64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:arm64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
   #         cache-from: type=local,src=/tmp/.buildx-cache
   #         cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
@@ -171,19 +171,19 @@ jobs:
   #     - name: Create and push multi-arch image
   #       run: |
   #         docker manifest create \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:amd64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:arm64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:amd64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:arm64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
 
   #         docker manifest annotate \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:amd64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:amd64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
   #           --arch amd64
 
   #         docker manifest annotate \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:arm64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:arm64-${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }} \
   #           --arch arm64
 
   #         docker manifest push \
-  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ GITHUB_ACTION_REPOSITORY }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
+  #           ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.repository }}:${{ steps.sanitize.outputs.branch }}-${{ steps.short-sha.outputs.sha }}
