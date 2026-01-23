@@ -27,8 +27,20 @@ Addon:
 
 | Поле | Обязательно | Описание |
 |------|-------------|----------|
-| `targetCluster` | Да | Целевой кластер (`in-cluster` или URL кластера) |
+| `targetCluster` | Да | Целевой кластер (см. форматы ниже) |
 | `targetNamespace` | Да | Namespace для развёртывания |
+
+#### targetCluster
+
+Поддерживается три формата:
+
+| Формат | Пример | Результат в ArgoCD |
+|--------|--------|-------------------|
+| Специальное значение | `in-cluster` | `destination.server: https://kubernetes.default.svc` |
+| URL кластера | `https://k8s.example.com:6443` | `destination.server: <URL>` |
+| Имя кластера | `production-cluster` | `destination.name: <name>` |
+
+При использовании имени кластера, кластер должен быть предварительно зарегистрирован в ArgoCD.
 
 ### Конфигурация Backend
 

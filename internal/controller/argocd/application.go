@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"strings"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,10 +88,7 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 					Values: string(valuesYAML),
 				},
 			},
-			Destination: argocdv1alpha1.ApplicationDestination{
-				Server:    b.getDestinationServer(addon),
-				Namespace: addon.Spec.TargetNamespace,
-			},
+			Destination:       b.getDestination(addon),
 			SyncPolicy:        b.getSyncPolicy(addon),
 			IgnoreDifferences: b.getIgnoreDifferences(addon),
 		},
@@ -106,11 +104,25 @@ func (b *ApplicationBuilder) getProject(addon *addonsv1alpha1.Addon) string {
 	return defaultProject
 }
 
-func (b *ApplicationBuilder) getDestinationServer(addon *addonsv1alpha1.Addon) string {
-	if addon.Spec.TargetCluster == inClusterDestination {
-		return defaultTargetCluster
+func (b *ApplicationBuilder) getDestination(addon *addonsv1alpha1.Addon) argocdv1alpha1.ApplicationDestination {
+	dest := argocdv1alpha1.ApplicationDestination{
+		Namespace: addon.Spec.TargetNamespace,
 	}
-	return addon.Spec.TargetCluster
+
+	switch {
+	case addon.Spec.TargetCluster == inClusterDestination:
+		dest.Server = defaultTargetCluster
+	case isClusterURL(addon.Spec.TargetCluster):
+		dest.Server = addon.Spec.TargetCluster
+	default:
+		dest.Name = addon.Spec.TargetCluster
+	}
+
+	return dest
+}
+
+func isClusterURL(s string) bool {
+	return strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://")
 }
 
 func (b *ApplicationBuilder) getSyncPolicy(addon *addonsv1alpha1.Addon) *argocdv1alpha1.SyncPolicy {

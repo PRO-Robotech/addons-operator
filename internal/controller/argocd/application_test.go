@@ -148,6 +148,37 @@ func TestApplicationBuilder_Build_WithExternalCluster(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "https://external-cluster.example.com:6443", app.Spec.Destination.Server)
+	assert.Equal(t, "", app.Spec.Destination.Name)
+}
+
+func TestApplicationBuilder_Build_WithClusterName(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "production-cluster",
+		},
+	}
+
+	app, err := builder.Build(addon, "argocd", nil)
+	require.NoError(t, err)
+
+	// When using cluster name, Server should be empty and Name should be set
+	assert.Equal(t, "", app.Spec.Destination.Server)
+	assert.Equal(t, "production-cluster", app.Spec.Destination.Name)
+	assert.Equal(t, "test-ns", app.Spec.Destination.Namespace)
 }
 
 func TestApplicationBuilder_Build_WithSyncPolicy(t *testing.T) {
@@ -320,28 +351,64 @@ func TestApplicationBuilder_GetApplicationRef(t *testing.T) {
 	assert.Equal(t, "argocd", ref.Namespace)
 }
 
-func TestApplicationBuilder_GetDestinationServer(t *testing.T) {
+func TestApplicationBuilder_GetDestination(t *testing.T) {
 	builder := NewApplicationBuilder()
 
 	tests := []struct {
-		name           string
-		targetCluster  string
-		expectedServer string
+		name              string
+		targetCluster     string
+		targetNamespace   string
+		expectedServer    string
+		expectedName      string
+		expectedNamespace string
 	}{
 		{
-			name:           "in-cluster destination",
-			targetCluster:  "in-cluster",
-			expectedServer: "https://kubernetes.default.svc",
+			name:              "in-cluster destination",
+			targetCluster:     "in-cluster",
+			targetNamespace:   "test-ns",
+			expectedServer:    "https://kubernetes.default.svc",
+			expectedName:      "",
+			expectedNamespace: "test-ns",
 		},
 		{
-			name:           "external cluster URL",
-			targetCluster:  "https://cluster.example.com:6443",
-			expectedServer: "https://cluster.example.com:6443",
+			name:              "https URL",
+			targetCluster:     "https://cluster.example.com:6443",
+			targetNamespace:   "test-ns",
+			expectedServer:    "https://cluster.example.com:6443",
+			expectedName:      "",
+			expectedNamespace: "test-ns",
 		},
 		{
-			name:           "empty target cluster",
-			targetCluster:  "",
-			expectedServer: "",
+			name:              "http URL",
+			targetCluster:     "http://cluster.example.com:6443",
+			targetNamespace:   "test-ns",
+			expectedServer:    "http://cluster.example.com:6443",
+			expectedName:      "",
+			expectedNamespace: "test-ns",
+		},
+		{
+			name:              "cluster name",
+			targetCluster:     "production-cluster",
+			targetNamespace:   "test-ns",
+			expectedServer:    "",
+			expectedName:      "production-cluster",
+			expectedNamespace: "test-ns",
+		},
+		{
+			name:              "cluster name with dots",
+			targetCluster:     "cluster.production.internal",
+			targetNamespace:   "test-ns",
+			expectedServer:    "",
+			expectedName:      "cluster.production.internal",
+			expectedNamespace: "test-ns",
+		},
+		{
+			name:              "empty target cluster becomes empty name",
+			targetCluster:     "",
+			targetNamespace:   "test-ns",
+			expectedServer:    "",
+			expectedName:      "",
+			expectedNamespace: "test-ns",
 		},
 	}
 
@@ -349,11 +416,39 @@ func TestApplicationBuilder_GetDestinationServer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			addon := &addonsv1alpha1.Addon{
 				Spec: addonsv1alpha1.AddonSpec{
-					TargetCluster: tt.targetCluster,
+					TargetCluster:   tt.targetCluster,
+					TargetNamespace: tt.targetNamespace,
 				},
 			}
-			result := builder.getDestinationServer(addon)
-			assert.Equal(t, tt.expectedServer, result)
+			result := builder.getDestination(addon)
+			assert.Equal(t, tt.expectedServer, result.Server)
+			assert.Equal(t, tt.expectedName, result.Name)
+			assert.Equal(t, tt.expectedNamespace, result.Namespace)
+		})
+	}
+}
+
+func TestIsClusterURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{name: "https URL", input: "https://cluster.example.com", expected: true},
+		{name: "http URL", input: "http://cluster.example.com", expected: true},
+		{name: "https with port", input: "https://cluster.example.com:6443", expected: true},
+		{name: "http with port", input: "http://cluster.example.com:8080", expected: true},
+		{name: "cluster name", input: "production-cluster", expected: false},
+		{name: "cluster name with dots", input: "cluster.production.internal", expected: false},
+		{name: "in-cluster", input: "in-cluster", expected: false},
+		{name: "empty string", input: "", expected: false},
+		{name: "ftp URL (not supported)", input: "ftp://example.com", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isClusterURL(tt.input)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
