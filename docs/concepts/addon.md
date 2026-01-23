@@ -217,6 +217,48 @@ Values выбираются и объединяются из ресурсов Ad
 Результат:    { replicas: 3, memory: "512Mi" }
 ```
 
+## Пауза Reconciliation
+
+Для отладки можно приостановить reconciliation Addon, чтобы вручную редактировать
+Application в ArgoCD UI/CLI без перезаписи контроллером.
+
+### Использование
+
+```bash
+# Поставить на паузу
+kubectl annotate addon cilium addons.in-cloud.io/paused=true
+
+# Снять с паузы
+kubectl annotate addon cilium addons.in-cloud.io/paused-
+```
+
+### Поведение при паузе
+
+| Аспект | Поведение |
+|--------|-----------|
+| Addon → Application | Остановлено (контроллер не перезаписывает) |
+| ArgoCD sync | Продолжает работать |
+| Application в ArgoCD | Можно редактировать вручную |
+| Status conditions | `Ready=False`, `Progressing=False`, Reason=Paused |
+| Delete | Работает (финализатор срабатывает) |
+
+При паузе status показывает:
+
+```yaml
+status:
+  conditions:
+    - type: Ready
+      status: "False"
+      reason: Paused
+      message: "Reconciliation is paused"
+    - type: Progressing
+      status: "False"
+      reason: Paused
+      message: "Reconciliation is paused"
+    - type: Degraded
+      status: "False"  # Пауза - не ошибка
+```
+
 ## Зависимости
 
 Используйте `initDependencies` для блокировки развёртывания до готовности зависимостей:

@@ -69,6 +69,7 @@ const (
 	ReasonWaitingForDependency = "WaitingForDependency"
 	ReasonCreatingApplication  = "CreatingApplication"
 	ReasonResolvingValues      = "ResolvingValues"
+	ReasonPaused               = "Paused"
 )
 
 // Addon-specific Degraded condition reasons.

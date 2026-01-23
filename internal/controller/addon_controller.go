@@ -47,12 +47,14 @@ import (
 )
 
 const (
-	requeueIntervalDegraded = 60 * time.Second
-	finalizerName           = "addons.in-cloud.io/finalizer"
-	addonLabelKey           = "addons.in-cloud.io/addon"
-	valuesSourcesIndexKey   = "spec.valuesSources.sourceRef"
-	dependencyIndexKey      = "spec.initDependencies.name"
-	setupTimeout            = 30 * time.Second
+	requeueIntervalDegraded  = 60 * time.Second
+	finalizerName            = "addons.in-cloud.io/finalizer"
+	addonLabelKey            = "addons.in-cloud.io/addon"
+	valuesSourcesIndexKey    = "spec.valuesSources.sourceRef"
+	dependencyIndexKey       = "spec.initDependencies.name"
+	setupTimeout             = 30 * time.Second
+	pauseAnnotationKey       = "addons.in-cloud.io/paused"
+	pauseAnnotationValueTrue = "true"
 )
 
 // AddonReconciler reconciles Addon objects.
@@ -105,6 +107,14 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if err := r.ensureFinalizer(ctx, addon); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// Check if paused (skip reconciliation but allow delete and finalizer)
+	if isPaused(addon) {
+		logger.Info("Addon is paused, skipping reconciliation")
+		cm.SetCondition(conditions.TypeReady, false, conditions.ReasonPaused, "Reconciliation is paused")
+		cm.SetCondition(conditions.TypeProgressing, false, conditions.ReasonPaused, "Reconciliation is paused")
+		return r.updateStatus(ctx, addon, cm)
 	}
 
 	cm.SetProgressing(conditions.ReasonInitializing, conditions.ReasonReconciling, "Reconciliation in progress")
@@ -678,4 +688,11 @@ func (r *AddonReconciler) findAddonsBySourceRefUnstructured(ctx context.Context,
 	}
 
 	return requests
+}
+
+// isPaused returns true if the Addon has the pause annotation set to "true".
+// When paused, the controller skips reconciliation allowing manual debugging
+// of the ArgoCD Application without the controller overwriting changes.
+func isPaused(addon *addonsv1alpha1.Addon) bool {
+	return addon.Annotations[pauseAnnotationKey] == pauseAnnotationValueTrue
 }

@@ -26,6 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1089,6 +1090,215 @@ var _ = Describe("Addon Controller", func() {
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
+
+	Context("Pause Annotation", func() {
+		It("should skip reconciliation when paused annotation is set", func() {
+			name := uniqueName("paused-addon")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for initial Application creation")
+			waitForApplication(name, "argocd")
+			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Recording initial Application state")
+			initialApp := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, initialApp)).To(Succeed())
+			initialResourceVersion := initialApp.ResourceVersion
+
+			By("Adding pause annotation")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			if addon.Annotations == nil {
+				addon.Annotations = make(map[string]string)
+			}
+			addon.Annotations["addons.in-cloud.io/paused"] = "true"
+			Expect(k8sClient.Update(ctx, addon)).To(Succeed())
+
+			By("Verifying Ready condition shows Paused reason")
+			Eventually(func() string {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return ""
+				}
+				cond := meta.FindStatusCondition(current.Status.Conditions, conditions.TypeReady)
+				if cond == nil {
+					return ""
+				}
+				return cond.Reason
+			}, timeout, interval).Should(Equal(conditions.ReasonPaused))
+
+			By("Verifying Progressing is False when paused")
+			Eventually(func() metav1.ConditionStatus {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return ""
+				}
+				cond := meta.FindStatusCondition(current.Status.Conditions, conditions.TypeProgressing)
+				if cond == nil {
+					return ""
+				}
+				return cond.Status
+			}, timeout, interval).Should(Equal(metav1.ConditionFalse))
+
+			By("Updating Addon spec while paused")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			addon.Spec.Version = "2.0.0"
+			Expect(k8sClient.Update(ctx, addon)).To(Succeed())
+
+			By("Verifying Application is not updated while paused")
+			Consistently(func() string {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return ""
+				}
+				return app.Spec.Source.TargetRevision
+			}, 2*time.Second, 200*time.Millisecond).Should(Equal("1.0.0"))
+
+			// Also verify resource version didn't change (no updates happened)
+			currentApp := &argocdv1alpha1.Application{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, currentApp)).To(Succeed())
+			Expect(currentApp.ResourceVersion).To(Equal(initialResourceVersion))
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should resume reconciliation when pause annotation is removed", func() {
+			name := uniqueName("resume-addon")
+
+			By("Creating paused Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+					Annotations: map[string]string{
+						"addons.in-cloud.io/paused": "true",
+					},
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Verifying Addon is paused (Ready=False, Reason=Paused)")
+			Eventually(func() string {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return ""
+				}
+				cond := meta.FindStatusCondition(current.Status.Conditions, conditions.TypeReady)
+				if cond == nil {
+					return ""
+				}
+				return cond.Reason
+			}, timeout, interval).Should(Equal(conditions.ReasonPaused))
+
+			By("Verifying no Application is created while paused")
+			Consistently(func() error {
+				app := &argocdv1alpha1.Application{}
+				return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app)
+			}, 2*time.Second, 200*time.Millisecond).ShouldNot(Succeed())
+
+			By("Removing pause annotation")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			delete(addon.Annotations, "addons.in-cloud.io/paused")
+			Expect(k8sClient.Update(ctx, addon)).To(Succeed())
+
+			By("Verifying Application is created after unpause")
+			waitForApplication(name, "argocd")
+			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should allow deletion even when paused", func() {
+			name := uniqueName("paused-delete")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created")
+			waitForApplication(name, "argocd")
+
+			By("Adding pause annotation")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			if addon.Annotations == nil {
+				addon.Annotations = make(map[string]string)
+			}
+			addon.Annotations["addons.in-cloud.io/paused"] = "true"
+			Expect(k8sClient.Update(ctx, addon)).To(Succeed())
+
+			By("Verifying Addon is paused (Ready=False, Reason=Paused)")
+			Eventually(func() string {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return ""
+				}
+				cond := meta.FindStatusCondition(current.Status.Conditions, conditions.TypeReady)
+				if cond == nil {
+					return ""
+				}
+				return cond.Reason
+			}, timeout, interval).Should(Equal(conditions.ReasonPaused))
+
+			By("Deleting the paused Addon")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+
+			By("Verifying Addon is deleted")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &addonsv1alpha1.Addon{})
+				return apierrors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+
+			By("Verifying Application is also deleted")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, &argocdv1alpha1.Application{})
+				return apierrors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 
