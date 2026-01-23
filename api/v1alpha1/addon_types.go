@@ -24,11 +24,18 @@ import (
 // It specifies which Helm chart to deploy, where to deploy it,
 // and how to aggregate values from AddonValue resources.
 type AddonSpec struct {
-	// Chart specifies the Helm chart name to deploy.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
+	// Chart specifies the Helm chart name for Helm repository sources.
+	// Either Chart or Path must be specified, but not both.
 	// +kubebuilder:validation:MaxLength=253
-	Chart string `json:"chart"`
+	// +optional
+	Chart string `json:"chart,omitempty"`
+
+	// Path specifies the directory path within a Git repository containing the Helm chart.
+	// Used when deploying from Git instead of a Helm repository.
+	// Either Chart or Path must be specified, but not both.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	Path string `json:"path,omitempty"`
 
 	// RepoURL specifies the Helm repository URL.
 	// +kubebuilder:validation:Required

@@ -23,6 +23,8 @@ import (
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
 )
 
+const testChart = "test-chart"
+
 var _ = Describe("Addon Webhook", func() {
 	var (
 		obj       *addonsv1alpha1.Addon
@@ -37,6 +39,7 @@ var _ = Describe("Addon Webhook", func() {
 	Context("When validating Addon creation", func() {
 		It("Should reject unsupported backend type", func() {
 			By("setting backend type to 'helm'")
+			obj.Spec.Chart = testChart
 			obj.Spec.Backend.Type = "helm"
 
 			_, err := validator.ValidateCreate(ctx, obj)
@@ -46,6 +49,7 @@ var _ = Describe("Addon Webhook", func() {
 
 		It("Should accept argocd backend type", func() {
 			By("setting backend type to 'argocd'")
+			obj.Spec.Chart = testChart
 			obj.Spec.Backend.Type = supportedBackendType
 
 			_, err := validator.ValidateCreate(ctx, obj)
@@ -54,6 +58,7 @@ var _ = Describe("Addon Webhook", func() {
 
 		It("Should reject duplicate selector names", func() {
 			By("creating addon with duplicate selector names")
+			obj.Spec.Chart = testChart
 			obj.Spec.Backend.Type = supportedBackendType
 			obj.Spec.ValuesSelectors = []addonsv1alpha1.ValuesSelector{
 				{Name: "default", Priority: 0, MatchLabels: map[string]string{"env": "dev"}},
@@ -67,6 +72,7 @@ var _ = Describe("Addon Webhook", func() {
 
 		It("Should accept unique selector names", func() {
 			By("creating addon with unique selector names")
+			obj.Spec.Chart = testChart
 			obj.Spec.Backend.Type = supportedBackendType
 			obj.Spec.ValuesSelectors = []addonsv1alpha1.ValuesSelector{
 				{Name: "dev", Priority: 0, MatchLabels: map[string]string{"env": "dev"}},
@@ -76,14 +82,54 @@ var _ = Describe("Addon Webhook", func() {
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("Should accept chart only", func() {
+			By("setting only chart")
+			obj.Spec.Chart = testChart
+			obj.Spec.Backend.Type = supportedBackendType
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should accept path only", func() {
+			By("setting only path")
+			obj.Spec.Path = "charts/my-app"
+			obj.Spec.Backend.Type = supportedBackendType
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject both chart and path", func() {
+			By("setting both chart and path")
+			obj.Spec.Chart = testChart
+			obj.Spec.Path = "charts/my-app"
+			obj.Spec.Backend.Type = supportedBackendType
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("chart and path are mutually exclusive"))
+		})
+
+		It("Should reject neither chart nor path", func() {
+			By("setting neither chart nor path")
+			obj.Spec.Backend.Type = supportedBackendType
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("either chart or path must be specified"))
+		})
 	})
 
 	Context("When validating Addon update", func() {
 		It("Should apply same validation rules on update", func() {
 			By("updating addon with invalid backend type")
 			oldObj := &addonsv1alpha1.Addon{}
+			oldObj.Spec.Chart = "test-chart"
 			oldObj.Spec.Backend.Type = supportedBackendType
 
+			obj.Spec.Chart = testChart
 			obj.Spec.Backend.Type = "helm"
 
 			_, err := validator.ValidateUpdate(ctx, oldObj, obj)

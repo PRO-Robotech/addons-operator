@@ -169,9 +169,10 @@ spec:
                 - type
                 type: object
               chart:
-                description: Chart specifies the Helm chart name to deploy.
+                description: |-
+                  Chart specifies the Helm chart name for Helm repository sources.
+                  Either Chart or Path must be specified, but not both.
                 maxLength: 253
-                minLength: 1
                 type: string
               initDependencies:
                 description: |-
@@ -305,6 +306,13 @@ spec:
                   - name
                   type: object
                 type: array
+              path:
+                description: |-
+                  Path specifies the directory path within a Git repository containing the Helm chart.
+                  Used when deploying from Git instead of a Helm repository.
+                  Either Chart or Path must be specified, but not both.
+                maxLength: 253
+                type: string
               repoURL:
                 description: RepoURL specifies the Helm repository URL.
                 maxLength: 2048
@@ -444,7 +452,6 @@ spec:
                 type: string
             required:
             - backend
-            - chart
             - repoURL
             - targetCluster
             - targetNamespace

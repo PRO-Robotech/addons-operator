@@ -851,3 +851,117 @@ func TestApplicationBuilder_NeedsUpdate_ManagedNamespaceMetadataChanged(t *testi
 		assert.Contains(t, reason, "syncPolicy differs")
 	})
 }
+
+func TestApplicationBuilder_Build_WithPath(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "my-app",
+			UID:  types.UID("test-uid-path"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Path:            "charts/my-app",
+			RepoURL:         "https://github.com/org/repo.git",
+			Version:         "main",
+			TargetNamespace: "my-app",
+			TargetCluster:   "in-cluster",
+		},
+	}
+
+	values := map[string]any{
+		"replicaCount": 3,
+	}
+
+	app, err := builder.Build(addon, "argocd", values)
+	require.NoError(t, err)
+
+	// Verify source uses path, not chart
+	assert.Equal(t, "", app.Spec.Source.Chart)
+	assert.Equal(t, "charts/my-app", app.Spec.Source.Path)
+	assert.Equal(t, "https://github.com/org/repo.git", app.Spec.Source.RepoURL)
+	assert.Equal(t, "main", app.Spec.Source.TargetRevision)
+	assert.NotNil(t, app.Spec.Source.Helm)
+	assert.Contains(t, app.Spec.Source.Helm.Values, "replicaCount: 3")
+}
+
+func TestApplicationBuilder_NeedsUpdate_PathChanged(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Path:            "charts/v2",
+			RepoURL:         "https://github.com/org/repo.git",
+			Version:         "main",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+		},
+	}
+
+	values := map[string]any{}
+
+	t.Run("needs update when path differs", func(t *testing.T) {
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: argocdv1alpha1.ApplicationSpec{
+				Project: "default",
+				Source: &argocdv1alpha1.ApplicationSource{
+					Path:           "charts/v1", // Different path
+					RepoURL:        "https://github.com/org/repo.git",
+					TargetRevision: "main",
+					Helm:           &argocdv1alpha1.ApplicationSourceHelm{Values: "{}\n"},
+				},
+				Destination: argocdv1alpha1.ApplicationDestination{
+					Server:    "https://kubernetes.default.svc",
+					Namespace: "test-ns",
+				},
+			},
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when path differs")
+		assert.Contains(t, reason, "path differs")
+	})
+
+	t.Run("no update needed when path matches", func(t *testing.T) {
+		desired, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: desired.Spec,
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate, "should not need update when path matches")
+		assert.Empty(t, reason)
+	})
+}

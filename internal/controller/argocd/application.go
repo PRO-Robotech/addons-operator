@@ -80,6 +80,7 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 			Project: b.getProject(addon),
 			Source: &argocdv1alpha1.ApplicationSource{
 				Chart:          addon.Spec.Chart,
+				Path:           addon.Spec.Path,
 				RepoURL:        addon.Spec.RepoURL,
 				TargetRevision: addon.Spec.Version,
 				Helm: &argocdv1alpha1.ApplicationSourceHelm{
@@ -210,6 +211,9 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 	if existing.Spec.Source != nil && desired.Spec.Source != nil {
 		if existing.Spec.Source.Chart != desired.Spec.Source.Chart {
 			return true, fmt.Sprintf("chart differs: existing=%q, desired=%q", existing.Spec.Source.Chart, desired.Spec.Source.Chart), nil
+		}
+		if existing.Spec.Source.Path != desired.Spec.Source.Path {
+			return true, fmt.Sprintf("path differs: existing=%q, desired=%q", existing.Spec.Source.Path, desired.Spec.Source.Path), nil
 		}
 		if existing.Spec.Source.RepoURL != desired.Spec.Source.RepoURL {
 			return true, fmt.Sprintf("repoURL differs: existing=%q, desired=%q", existing.Spec.Source.RepoURL, desired.Spec.Source.RepoURL), nil

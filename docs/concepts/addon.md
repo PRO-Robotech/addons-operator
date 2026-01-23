@@ -16,9 +16,12 @@ Addon:
 
 | Поле | Обязательно | Описание |
 |------|-------------|----------|
-| `chart` | Да | Имя Helm chart |
-| `repoURL` | Да | URL Helm репозитория |
-| `version` | Да | Версия chart |
+| `chart` | Нет* | Имя Helm chart (для Helm репозиториев) |
+| `path` | Нет* | Путь к директории с чартом (для Git репозиториев) |
+| `repoURL` | Да | URL Helm или Git репозитория |
+| `version` | Да | Версия chart или Git ревизия (branch, tag, commit) |
+
+\* Должен быть указан либо `chart`, либо `path`, но не оба одновременно.
 
 ### Целевая конфигурация
 
@@ -110,6 +113,29 @@ spec:
   variables:
     cluster_name: production
     region: us-east-1
+```
+
+### Пример с Git репозиторием
+
+Для развёртывания чарта из Git репозитория используйте `path` вместо `chart`:
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: my-app
+spec:
+  # Путь к чарту в Git репозитории
+  path: charts/my-app
+  repoURL: https://github.com/org/helm-charts.git
+  version: main  # branch, tag или commit SHA
+
+  targetCluster: in-cluster
+  targetNamespace: my-app
+
+  backend:
+    type: argocd
+    namespace: argocd
 ```
 
 ## Status

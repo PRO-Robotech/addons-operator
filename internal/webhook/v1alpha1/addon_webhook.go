@@ -82,6 +82,14 @@ func (v *AddonCustomValidator) ValidateDelete(_ context.Context, obj runtime.Obj
 
 // validateAddon performs validation rules for Addon.
 func validateAddon(addon *addonsv1alpha1.Addon) error {
+	// Validate chart/path mutual exclusivity
+	if addon.Spec.Chart == "" && addon.Spec.Path == "" {
+		return fmt.Errorf("either chart or path must be specified")
+	}
+	if addon.Spec.Chart != "" && addon.Spec.Path != "" {
+		return fmt.Errorf("chart and path are mutually exclusive")
+	}
+
 	// Validate backend type
 	if addon.Spec.Backend.Type != supportedBackendType {
 		return fmt.Errorf("unsupported backend type: %s, only '%s' is supported", addon.Spec.Backend.Type, supportedBackendType)
