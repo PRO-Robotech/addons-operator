@@ -35,6 +35,8 @@ Addon:
 | `backend.namespace` | Да | Namespace где создаётся Application |
 | `backend.project` | Нет | Argo CD project (по умолчанию: `default`) |
 | `backend.syncPolicy` | Нет | Политика авто-синхронизации Argo CD |
+| `backend.syncPolicy.managedNamespaceMetadata` | Нет | Labels и annotations для target namespace |
+| `backend.ignoreDifferences` | Нет | Правила игнорирования drift для ресурсов |
 
 ### Выбор Values
 
@@ -72,6 +74,24 @@ spec:
     type: argocd
     namespace: argocd
     project: infrastructure
+    syncPolicy:
+      automated:
+        prune: true
+        selfHeal: true
+      syncOptions:
+        - CreateNamespace=true
+      # Labels/annotations для создаваемого namespace
+      managedNamespaceMetadata:
+        labels:
+          environment: production
+        annotations:
+          description: "Managed by addon-operator"
+    # Игнорировать drift для определённых полей
+    ignoreDifferences:
+      - group: admissionregistration.k8s.io
+        kind: ValidatingWebhookConfiguration
+        jsonPointers:
+          - /webhooks/0/failurePolicy
 
   # Выбор values (порядок приоритета: 0 наименьший, 99 наибольший)
   valuesSelectors:

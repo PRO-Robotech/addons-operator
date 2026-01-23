@@ -59,6 +59,54 @@ spec:
               backend:
                 description: Backend configures the deployment backend (Argo CD).
                 properties:
+                  ignoreDifferences:
+                    description: |-
+                      IgnoreDifferences defines rules for ignoring differences during sync.
+                      This is useful for fields that are managed by external controllers or mutating webhooks.
+                    items:
+                      description: ResourceIgnoreDifferences defines rules for ignoring
+                        differences for specific resources.
+                      properties:
+                        group:
+                          description: |-
+                            Group is the API group of the resource (e.g., "apps", "admissionregistration.k8s.io").
+                            Empty string indicates the core API group.
+                          type: string
+                        jqPathExpressions:
+                          description: JQPathExpressions is a list of JQ path expressions
+                            to fields that should be ignored.
+                          items:
+                            type: string
+                          type: array
+                        jsonPointers:
+                          description: |-
+                            JSONPointers is a list of JSON pointers to fields that should be ignored.
+                            Uses RFC 6901 syntax (e.g., "/spec/replicas", "/metadata/annotations").
+                          items:
+                            type: string
+                          type: array
+                        kind:
+                          description: Kind is the resource kind (e.g., "Deployment",
+                            "ValidatingWebhookConfiguration").
+                          type: string
+                        managedFieldsManagers:
+                          description: ManagedFieldsManagers is a list of managers
+                            that should be ignored when comparing fields.
+                          items:
+                            type: string
+                          type: array
+                        name:
+                          description: Name is the resource name. If empty, applies
+                            to all resources of this kind.
+                          type: string
+                        namespace:
+                          description: Namespace is the resource namespace. If empty,
+                            applies to all namespaces.
+                          type: string
+                      required:
+                      - kind
+                      type: object
+                    type: array
                   namespace:
                     description: Namespace where the backend operates (e.g., "argocd").
                     type: string
@@ -85,6 +133,23 @@ spec:
                             description: SelfHeal enables automatic healing of out-of-sync
                               resources.
                             type: boolean
+                        type: object
+                      managedNamespaceMetadata:
+                        description: |-
+                          ManagedNamespaceMetadata controls metadata for the target namespace.
+                          Labels and annotations specified here will be applied to the namespace
+                          when CreateNamespace=true sync option is used.
+                        properties:
+                          annotations:
+                            additionalProperties:
+                              type: string
+                            description: Annotations to apply to the target namespace.
+                            type: object
+                          labels:
+                            additionalProperties:
+                              type: string
+                            description: Labels to apply to the target namespace.
+                            type: object
                         type: object
                       syncOptions:
                         description: SyncOptions provides additional sync options.

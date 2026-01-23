@@ -393,6 +393,145 @@ func TestApplicationBuilder_GetProject(t *testing.T) {
 	}
 }
 
+func TestApplicationBuilder_Build_WithManagedNamespaceMetadata(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			Backend: addonsv1alpha1.BackendSpec{
+				SyncPolicy: &addonsv1alpha1.SyncPolicy{
+					Automated: &addonsv1alpha1.AutomatedSync{
+						Prune:    true,
+						SelfHeal: true,
+					},
+					SyncOptions: []string{"CreateNamespace=true"},
+					ManagedNamespaceMetadata: &addonsv1alpha1.ManagedNamespaceMetadata{
+						Labels: map[string]string{
+							"environment": "production",
+							"managed-by":  "addon-operator",
+						},
+						Annotations: map[string]string{
+							"description": "Created by addon operator",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	app, err := builder.Build(addon, "argocd", nil)
+	require.NoError(t, err)
+
+	require.NotNil(t, app.Spec.SyncPolicy)
+	require.NotNil(t, app.Spec.SyncPolicy.ManagedNamespaceMetadata)
+
+	// Verify labels
+	assert.Equal(t, "production", app.Spec.SyncPolicy.ManagedNamespaceMetadata.Labels["environment"])
+	assert.Equal(t, "addon-operator", app.Spec.SyncPolicy.ManagedNamespaceMetadata.Labels["managed-by"])
+
+	// Verify annotations
+	assert.Equal(t, "Created by addon operator", app.Spec.SyncPolicy.ManagedNamespaceMetadata.Annotations["description"])
+}
+
+func TestApplicationBuilder_Build_WithIgnoreDifferences(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			Backend: addonsv1alpha1.BackendSpec{
+				IgnoreDifferences: []addonsv1alpha1.ResourceIgnoreDifferences{
+					{
+						Group:        "admissionregistration.k8s.io",
+						Kind:         "ValidatingWebhookConfiguration",
+						JSONPointers: []string{"/webhooks/0/failurePolicy"},
+					},
+					{
+						Kind:                  "Deployment",
+						Name:                  "my-deployment",
+						Namespace:             "default",
+						JQPathExpressions:     []string{".spec.replicas"},
+						ManagedFieldsManagers: []string{"kubectl"},
+					},
+				},
+			},
+		},
+	}
+
+	app, err := builder.Build(addon, "argocd", nil)
+	require.NoError(t, err)
+
+	require.Len(t, app.Spec.IgnoreDifferences, 2)
+
+	// Verify first rule
+	assert.Equal(t, "admissionregistration.k8s.io", app.Spec.IgnoreDifferences[0].Group)
+	assert.Equal(t, "ValidatingWebhookConfiguration", app.Spec.IgnoreDifferences[0].Kind)
+	assert.Equal(t, []string{"/webhooks/0/failurePolicy"}, app.Spec.IgnoreDifferences[0].JSONPointers)
+
+	// Verify second rule
+	assert.Equal(t, "", app.Spec.IgnoreDifferences[1].Group)
+	assert.Equal(t, "Deployment", app.Spec.IgnoreDifferences[1].Kind)
+	assert.Equal(t, "my-deployment", app.Spec.IgnoreDifferences[1].Name)
+	assert.Equal(t, "default", app.Spec.IgnoreDifferences[1].Namespace)
+	assert.Equal(t, []string{".spec.replicas"}, app.Spec.IgnoreDifferences[1].JQPathExpressions)
+	assert.Equal(t, []string{"kubectl"}, app.Spec.IgnoreDifferences[1].ManagedFieldsManagers)
+}
+
+func TestApplicationBuilder_GetIgnoreDifferences_EmptySlice(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			Backend: addonsv1alpha1.BackendSpec{
+				IgnoreDifferences: []addonsv1alpha1.ResourceIgnoreDifferences{},
+			},
+		},
+	}
+
+	app, err := builder.Build(addon, "argocd", nil)
+	require.NoError(t, err)
+
+	assert.Nil(t, app.Spec.IgnoreDifferences)
+}
+
 func TestApplicationBuilder_NeedsUpdate(t *testing.T) {
 	builder := NewApplicationBuilder()
 
@@ -519,5 +658,196 @@ func TestApplicationBuilder_NeedsUpdate(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, needsUpdate, "should need update when labels missing")
 		assert.Contains(t, reason, "label")
+	})
+}
+
+func TestApplicationBuilder_NeedsUpdate_IgnoreDifferencesChanged(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			Backend: addonsv1alpha1.BackendSpec{
+				IgnoreDifferences: []addonsv1alpha1.ResourceIgnoreDifferences{
+					{
+						Group:        "admissionregistration.k8s.io",
+						Kind:         "ValidatingWebhookConfiguration",
+						JSONPointers: []string{"/webhooks/0/failurePolicy"},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("needs update when ignoreDifferences added", func(t *testing.T) {
+		values := map[string]any{}
+		// Existing application without ignoreDifferences
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: argocdv1alpha1.ApplicationSpec{
+				Project: "default",
+				Source: &argocdv1alpha1.ApplicationSource{
+					Chart:          "test-chart",
+					RepoURL:        "https://example.com/charts",
+					TargetRevision: "1.0.0",
+					Helm:           &argocdv1alpha1.ApplicationSourceHelm{Values: "{}\n"},
+				},
+				Destination: argocdv1alpha1.ApplicationDestination{
+					Server:    "https://kubernetes.default.svc",
+					Namespace: "test-ns",
+				},
+				IgnoreDifferences: nil, // No ignoreDifferences
+			},
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when ignoreDifferences added")
+		assert.Contains(t, reason, "ignoreDifferences differs")
+	})
+
+	t.Run("needs update when ignoreDifferences changed", func(t *testing.T) {
+		values := map[string]any{}
+		// Existing application with different ignoreDifferences
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: argocdv1alpha1.ApplicationSpec{
+				Project: "default",
+				Source: &argocdv1alpha1.ApplicationSource{
+					Chart:          "test-chart",
+					RepoURL:        "https://example.com/charts",
+					TargetRevision: "1.0.0",
+					Helm:           &argocdv1alpha1.ApplicationSourceHelm{Values: "{}\n"},
+				},
+				Destination: argocdv1alpha1.ApplicationDestination{
+					Server:    "https://kubernetes.default.svc",
+					Namespace: "test-ns",
+				},
+				IgnoreDifferences: []argocdv1alpha1.ResourceIgnoreDifferences{
+					{
+						Kind:         "Deployment", // Different kind
+						JSONPointers: []string{"/spec/replicas"},
+					},
+				},
+			},
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when ignoreDifferences changed")
+		assert.Contains(t, reason, "ignoreDifferences differs")
+	})
+
+	t.Run("no update needed when ignoreDifferences match", func(t *testing.T) {
+		values := map[string]any{}
+		desired, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: desired.Spec,
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate, "should not need update when ignoreDifferences match")
+		assert.Empty(t, reason)
+	})
+}
+
+func TestApplicationBuilder_NeedsUpdate_ManagedNamespaceMetadataChanged(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "addons.in-cloud.io/v1alpha1",
+			Kind:       "Addon",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			Backend: addonsv1alpha1.BackendSpec{
+				SyncPolicy: &addonsv1alpha1.SyncPolicy{
+					ManagedNamespaceMetadata: &addonsv1alpha1.ManagedNamespaceMetadata{
+						Labels: map[string]string{"env": "prod"},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("needs update when managedNamespaceMetadata added", func(t *testing.T) {
+		values := map[string]any{}
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: argocdv1alpha1.ApplicationSpec{
+				Project: "default",
+				Source: &argocdv1alpha1.ApplicationSource{
+					Chart:          "test-chart",
+					RepoURL:        "https://example.com/charts",
+					TargetRevision: "1.0.0",
+					Helm:           &argocdv1alpha1.ApplicationSourceHelm{Values: "{}\n"},
+				},
+				Destination: argocdv1alpha1.ApplicationDestination{
+					Server:    "https://kubernetes.default.svc",
+					Namespace: "test-ns",
+				},
+				SyncPolicy: &argocdv1alpha1.SyncPolicy{
+					// No ManagedNamespaceMetadata
+				},
+			},
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when managedNamespaceMetadata added")
+		assert.Contains(t, reason, "syncPolicy differs")
 	})
 }

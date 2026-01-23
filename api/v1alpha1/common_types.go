@@ -206,6 +206,44 @@ type BackendSpec struct {
 	// SyncPolicy configures automatic sync behavior.
 	// +optional
 	SyncPolicy *SyncPolicy `json:"syncPolicy,omitempty"`
+
+	// IgnoreDifferences defines rules for ignoring differences during sync.
+	// This is useful for fields that are managed by external controllers or mutating webhooks.
+	// +optional
+	IgnoreDifferences []ResourceIgnoreDifferences `json:"ignoreDifferences,omitempty"`
+}
+
+// ResourceIgnoreDifferences defines rules for ignoring differences for specific resources.
+type ResourceIgnoreDifferences struct {
+	// Group is the API group of the resource (e.g., "apps", "admissionregistration.k8s.io").
+	// Empty string indicates the core API group.
+	// +optional
+	Group string `json:"group,omitempty"`
+
+	// Kind is the resource kind (e.g., "Deployment", "ValidatingWebhookConfiguration").
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+
+	// Name is the resource name. If empty, applies to all resources of this kind.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Namespace is the resource namespace. If empty, applies to all namespaces.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// JSONPointers is a list of JSON pointers to fields that should be ignored.
+	// Uses RFC 6901 syntax (e.g., "/spec/replicas", "/metadata/annotations").
+	// +optional
+	JSONPointers []string `json:"jsonPointers,omitempty"`
+
+	// JQPathExpressions is a list of JQ path expressions to fields that should be ignored.
+	// +optional
+	JQPathExpressions []string `json:"jqPathExpressions,omitempty"`
+
+	// ManagedFieldsManagers is a list of managers that should be ignored when comparing fields.
+	// +optional
+	ManagedFieldsManagers []string `json:"managedFieldsManagers,omitempty"`
 }
 
 // SyncPolicy configures Argo CD automatic sync behavior.
@@ -217,6 +255,23 @@ type SyncPolicy struct {
 	// SyncOptions provides additional sync options.
 	// +optional
 	SyncOptions []string `json:"syncOptions,omitempty"`
+
+	// ManagedNamespaceMetadata controls metadata for the target namespace.
+	// Labels and annotations specified here will be applied to the namespace
+	// when CreateNamespace=true sync option is used.
+	// +optional
+	ManagedNamespaceMetadata *ManagedNamespaceMetadata `json:"managedNamespaceMetadata,omitempty"`
+}
+
+// ManagedNamespaceMetadata defines labels and annotations for target namespace.
+type ManagedNamespaceMetadata struct {
+	// Labels to apply to the target namespace.
+	// +optional
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// Annotations to apply to the target namespace.
+	// +optional
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // AutomatedSync configures automatic synchronization.

@@ -90,7 +90,8 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 				Server:    b.getDestinationServer(addon),
 				Namespace: addon.Spec.TargetNamespace,
 			},
-			SyncPolicy: b.getSyncPolicy(addon),
+			SyncPolicy:        b.getSyncPolicy(addon),
+			IgnoreDifferences: b.getIgnoreDifferences(addon),
 		},
 	}
 
@@ -131,6 +132,33 @@ func (b *ApplicationBuilder) getSyncPolicy(addon *addonsv1alpha1.Addon) *argocdv
 		result.SyncOptions = argocdv1alpha1.SyncOptions(sp.SyncOptions)
 	}
 
+	if sp.ManagedNamespaceMetadata != nil {
+		result.ManagedNamespaceMetadata = &argocdv1alpha1.ManagedNamespaceMetadata{
+			Labels:      sp.ManagedNamespaceMetadata.Labels,
+			Annotations: sp.ManagedNamespaceMetadata.Annotations,
+		}
+	}
+
+	return result
+}
+
+func (b *ApplicationBuilder) getIgnoreDifferences(addon *addonsv1alpha1.Addon) []argocdv1alpha1.ResourceIgnoreDifferences {
+	if len(addon.Spec.Backend.IgnoreDifferences) == 0 {
+		return nil
+	}
+
+	result := make([]argocdv1alpha1.ResourceIgnoreDifferences, len(addon.Spec.Backend.IgnoreDifferences))
+	for i, diff := range addon.Spec.Backend.IgnoreDifferences {
+		result[i] = argocdv1alpha1.ResourceIgnoreDifferences{
+			Group:                 diff.Group,
+			Kind:                  diff.Kind,
+			Name:                  diff.Name,
+			Namespace:             diff.Namespace,
+			JSONPointers:          diff.JSONPointers,
+			JQPathExpressions:     diff.JQPathExpressions,
+			ManagedFieldsManagers: diff.ManagedFieldsManagers,
+		}
+	}
 	return result
 }
 
@@ -202,6 +230,10 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 
 	if !reflect.DeepEqual(existing.Spec.SyncPolicy, desired.Spec.SyncPolicy) {
 		return true, "syncPolicy differs", nil
+	}
+
+	if !reflect.DeepEqual(existing.Spec.IgnoreDifferences, desired.Spec.IgnoreDifferences) {
+		return true, "ignoreDifferences differs", nil
 	}
 
 	return false, "", nil

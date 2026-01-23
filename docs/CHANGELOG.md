@@ -33,6 +33,8 @@
 - **Argo CD Backend** — интеграция с Argo CD для развёртывания
   - Автоматическая генерация Application ресурсов
   - Конфигурация политики синхронизации
+  - Управление metadata для target namespace (`managedNamespaceMetadata`)
+  - Игнорирование drift для определённых ресурсов (`ignoreDifferences`)
   - Отслеживание статуса здоровья и синхронизации
 
 - **Value Sources** — извлечение values из внешних ресурсов

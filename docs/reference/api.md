@@ -318,6 +318,7 @@ spec:
 | `namespace` | string | Да | - | Namespace бэкенда |
 | `project` | string | Нет | "default" | Argo CD project |
 | `syncPolicy` | [SyncPolicy](#syncpolicy) | Нет | - | Конфигурация синхронизации |
+| `ignoreDifferences` | [][ResourceIgnoreDifferences](#resourceignoredifferences) | Нет | - | Правила игнорирования drift |
 
 ### SyncPolicy
 
@@ -325,6 +326,7 @@ spec:
 |------|-----|----------|
 | `automated` | [AutomatedSync](#automatedsync) | Настройки авто-синхронизации |
 | `syncOptions` | []string | Дополнительные опции синхронизации |
+| `managedNamespaceMetadata` | [ManagedNamespaceMetadata](#managednamespacemetadata) | Metadata для target namespace |
 
 ### AutomatedSync
 
@@ -333,6 +335,58 @@ spec:
 | `prune` | bool | false | Удалять ресурсы отсутствующие в Git |
 | `selfHeal` | bool | false | Авто-восстановление out-of-sync ресурсов |
 | `allowEmpty` | bool | false | Разрешить синхронизацию без ресурсов |
+
+### ManagedNamespaceMetadata
+
+Определяет labels и annotations для target namespace. Применяется при использовании `CreateNamespace=true` в syncOptions.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `labels` | map[string]string | Labels для namespace |
+| `annotations` | map[string]string | Annotations для namespace |
+
+**Пример:**
+```yaml
+syncPolicy:
+  syncOptions:
+    - CreateNamespace=true
+  managedNamespaceMetadata:
+    labels:
+      environment: production
+      team: platform
+    annotations:
+      description: "Created by addon-operator"
+```
+
+### ResourceIgnoreDifferences
+
+Определяет правила игнорирования drift для конкретных ресурсов. Полезно для полей, управляемых внешними контроллерами или mutating webhooks.
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|-------------|----------|
+| `group` | string | Нет | API group ресурса (пусто для core API) |
+| `kind` | string | Да | Тип ресурса |
+| `name` | string | Нет | Имя ресурса (пусто = все ресурсы этого типа) |
+| `namespace` | string | Нет | Namespace ресурса |
+| `jsonPointers` | []string | Нет | JSON Pointers (RFC 6901) к игнорируемым полям |
+| `jqPathExpressions` | []string | Нет | JQ выражения для полей |
+| `managedFieldsManagers` | []string | Нет | Игнорировать поля этих managers |
+
+**Пример:**
+```yaml
+backend:
+  ignoreDifferences:
+    # Игнорировать failurePolicy в webhooks (часто меняется внешними контроллерами)
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+        - /webhooks/0/failurePolicy
+    # Игнорировать replicas в Deployment (HPA управляет)
+    - kind: Deployment
+      name: my-deployment
+      jqPathExpressions:
+        - .spec.replicas
+```
 
 ### ApplicationRef
 
