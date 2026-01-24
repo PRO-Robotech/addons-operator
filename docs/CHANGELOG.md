@@ -5,8 +5,6 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект придерживается [Семантического версионирования](https://semver.org/lang/ru/).
 
-## [Unreleased]
-
 ## [0.1.0] - 2026-01-18
 
 Первый релиз Addon Operator.
@@ -76,5 +74,4 @@
 
 ---
 
-[Unreleased]: https://github.com/PRO-Robotech/addons-operator/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/PRO-Robotech/addons-operator/releases/tag/v0.1.0
