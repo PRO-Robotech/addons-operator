@@ -1,0 +1,40 @@
+# Basic Addon fixture for e2e tests
+# Uses lightweight podinfo chart for fast testing
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  # Addon is cluster-scoped, no namespace needed
+  name: test-podinfo
+spec:
+  chart: podinfo
+  repoURL: https://stefanprodan.github.io/podinfo
+  version: "6.5.0"
+  targetCluster: in-cluster
+  targetNamespace: default
+  backend:
+    type: argocd
+    namespace: argocd
+    syncPolicy:
+      automated:
+        prune: true
+        selfHeal: true
+  valuesSelectors:
+    - name: default
+      priority: 0
+      matchLabels:
+        addons.in-cloud.io/addon: test-podinfo
+        addons.in-cloud.io/layer: default
+---
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonValue
+metadata:
+  # AddonValue is cluster-scoped, no namespace needed
+  name: test-podinfo-default
+  labels:
+    addons.in-cloud.io/addon: test-podinfo
+    addons.in-cloud.io/layer: default
+spec:
+  values:
+    replicaCount: 1
+    service:
+      type: ClusterIP
