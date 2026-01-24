@@ -77,7 +77,7 @@ type AddonSpec struct {
 	ValuesSources []ValueSource `json:"valuesSources,omitempty"`
 
 	// Variables provides values for Go template rendering in AddonValue.
-	// Accessible as {{ .Variables.key }} in value templates.
+	// Accessible as .Variables.key in value templates.
 	// +optional
 	Variables map[string]string `json:"variables,omitempty"`
 

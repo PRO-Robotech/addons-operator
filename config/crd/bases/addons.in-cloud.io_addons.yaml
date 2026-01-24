@@ -443,7 +443,7 @@ spec:
                   type: string
                 description: |-
                   Variables provides values for Go template rendering in AddonValue.
-                  Accessible as {{ .Variables.key }} in value templates.
+                  Accessible as .Variables.key in value templates.
                 type: object
               version:
                 description: Version specifies the chart version to deploy.

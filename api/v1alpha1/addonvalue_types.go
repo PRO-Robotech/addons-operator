@@ -26,7 +26,7 @@ import (
 // through label matching.
 type AddonValueSpec struct {
 	// Values contains the Helm values fragment as arbitrary YAML/JSON.
-	// Values can include Go template expressions like {{ .Variables.key }}
+	// Values can include Go template expressions (e.g. .Variables.key)
 	// which are rendered during value aggregation.
 	// +kubebuilder:pruning:PreserveUnknownFields
 	// +kubebuilder:validation:Required
