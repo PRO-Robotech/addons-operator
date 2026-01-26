@@ -62,6 +62,10 @@ metrics:
 # Required for webhook certificates and metrics endpoint certificates.
 certManager:
   enable: true
+  useExternalIssuer: false
+  externalIssuer:
+    kind: ClusterIssuer
+    name: ""
 
 # Webhook server configuration
 webhook:
