@@ -83,6 +83,10 @@ spec:
               {{- end }}
             serviceAccountName: addon-operator-controller-manager
             terminationGracePeriodSeconds: 10
+            {{- with .Values.manager.tolerations }}
+            tolerations:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
             volumes:
                 {{- if .Values.certManager.enable }}
                 - name: webhook-certs
