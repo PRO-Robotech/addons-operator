@@ -2,21 +2,21 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-    labels:
-        app.kubernetes.io/managed-by: {{ .Release.Service }}
-        app.kubernetes.io/name: addon-operator
-    name: addon-operator-metrics-certs
-    namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: addon-operator
+  name: addon-operator-metrics-certs
+  namespace: {{ .Release.Namespace }}
 spec:
-    dnsNames:
-        - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc
-        - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc.cluster.local
-    issuerRef:
-    {{- if .Values.certManager.useExternalIssuer }}
-        {{ .Values.certManager.externalIssuer | toYaml | nindent 4 }}
-    {{- else }}
-        kind: Issuer
-        name: {{ include "chart.name" . }}-selfsigned-issuer
-    {{- end }}
-    secretName: metrics-server-cert
+  dnsNames:
+    - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc
+    - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc.cluster.local
+  issuerRef:
+  {{- if .Values.certManager.useExternalIssuer }}
+    {{ .Values.certManager.externalIssuer | toYaml | nindent 4 }}
+  {{- else }}
+    kind: Issuer
+    name: {{ include "chart.name" . }}-selfsigned-issuer
+  {{- end }}
+  secretName: metrics-server-cert
 {{- end }}
