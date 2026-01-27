@@ -12,7 +12,11 @@ spec:
         - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc
         - {{ include "chart.serviceName" (dict "suffix" "controller-manager-metrics-service" "context" .) }}.{{ include "chart.namespaceName" . }}.svc.cluster.local
     issuerRef:
+    {{- if .Values.certManager.useExternalIssuer }}
+        {{ .Values.certManager.externalIssuer | toYaml | nindent 4 }}
+    {{- else }}
         kind: Issuer
         name: {{ include "chart.name" . }}-selfsigned-issuer
+    {{- end }}
     secretName: metrics-server-cert
 {{- end }}
