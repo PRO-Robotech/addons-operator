@@ -76,7 +76,7 @@ func (s BracketSegment) Extract(value any) (any, bool) {
 // FilterSegment filters an array by a field condition: /selectors[?(@.name=='custom')]
 type FilterSegment struct {
 	Field    string
-	Operator string // Only '==' supported in v1
+	Operator string
 	Value    string
 }
 
@@ -92,8 +92,16 @@ func (s FilterSegment) Extract(value any) (any, bool) {
 			continue
 		}
 		if v, ok := m[s.Field]; ok {
-			if fmt.Sprintf("%v", v) == s.Value {
-				return item, true // Return first match
+			strVal := fmt.Sprintf("%v", v)
+			var match bool
+			switch s.Operator {
+			case "!=":
+				match = strVal != s.Value
+			default:
+				match = strVal == s.Value
+			}
+			if match {
+				return item, true
 			}
 		}
 	}

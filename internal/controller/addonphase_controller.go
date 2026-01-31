@@ -288,8 +288,7 @@ func (r *AddonPhaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			for _, rule := range phase.Spec.Rules {
 				for _, criterion := range rule.Criteria {
 					if criterion.Source != nil && criterion.Source.Name != "" {
-						key := fmt.Sprintf("%s/%s", criterion.Source.Namespace, criterion.Source.Name)
-						deps[key] = struct{}{}
+						deps[criterion.Source.Name] = struct{}{}
 					}
 				}
 			}
@@ -339,7 +338,7 @@ func (r *AddonPhaseReconciler) findPhasesByDependency(ctx context.Context, obj c
 		return nil
 	}
 
-	key := fmt.Sprintf("/%s", addon.Name)
+	key := addon.Name
 
 	var phases addonsv1alpha1.AddonPhaseList
 	if err := r.List(ctx, &phases, client.MatchingFields{

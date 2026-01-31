@@ -374,6 +374,29 @@ func TestFilterSegment_Extract(t *testing.T) {
 			expected: nil,
 			found:    false,
 		},
+		{
+			name:     "filter not equal match",
+			segment:  FilterSegment{Field: "type", Operator: "!=", Value: "Ready"},
+			value:    conditions,
+			expected: map[string]any{"type": "Progressing", "status": "False"},
+			found:    true,
+		},
+		{
+			name:    "filter not equal no match",
+			segment: FilterSegment{Field: "type", Operator: "!=", Value: "Ready"},
+			value: []any{
+				map[string]any{"type": "Ready", "status": "True"},
+			},
+			expected: nil,
+			found:    false,
+		},
+		{
+			name:     "filter not equal skips matching",
+			segment:  FilterSegment{Field: "status", Operator: "!=", Value: "True"},
+			value:    conditions,
+			expected: map[string]any{"type": "Progressing", "status": "False"},
+			found:    true,
+		},
 	}
 
 	for _, tt := range tests {

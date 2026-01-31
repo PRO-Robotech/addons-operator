@@ -249,12 +249,14 @@ func expectedToFloat64(expected *apiextensionsv1.JSON) (float64, error) {
 }
 
 func deepEqual(a, b any) bool {
-	// Handle string comparison with type coercion
-	aStr := fmt.Sprintf("%v", a)
-	bStr := fmt.Sprintf("%v", b)
-	if aStr == bStr {
+	if reflect.DeepEqual(a, b) {
 		return true
 	}
 
-	return reflect.DeepEqual(a, b)
+	aFloat, aOk := toFloat64(a)
+	bFloat, bOk := toFloat64(b)
+	if aOk && bOk {
+		return aFloat == bFloat
+	}
+	return false
 }

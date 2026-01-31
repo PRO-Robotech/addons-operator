@@ -102,13 +102,17 @@ func (v *AddonPhaseCustomValidator) validateAddonPhase(ctx context.Context, addo
 		return fmt.Errorf("failed to check addon existence: %w", err)
 	}
 
-	// Validate unique rule names
+	// Validate unique rule names and criteria
 	ruleNames := make(map[string]struct{})
-	for _, rule := range addonphase.Spec.Rules {
+	for i, rule := range addonphase.Spec.Rules {
 		if _, exists := ruleNames[rule.Name]; exists {
 			return fmt.Errorf("duplicate rule name: %s", rule.Name)
 		}
 		ruleNames[rule.Name] = struct{}{}
+
+		if err := validateCriteria(rule.Criteria, fmt.Sprintf("spec.rules[%d].criteria", i)); err != nil {
+			return err
+		}
 	}
 
 	return nil

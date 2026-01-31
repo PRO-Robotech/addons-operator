@@ -92,7 +92,7 @@ type ExtractRule struct {
 
 	// Decode specifies optional decoding to apply.
 	// Supported: "base64" (for Secret data).
-	// +kubebuilder:validation:Enum=base64;""
+	// +kubebuilder:validation:Enum=base64
 	// +optional
 	Decode string `json:"decode,omitempty"`
 }
@@ -144,8 +144,9 @@ type CriterionSource struct {
 	Kind string `json:"kind"`
 
 	// Name of the resource.
-	// +kubebuilder:validation:Required
-	Name string `json:"name"`
+	// Mutually exclusive with LabelSelector: exactly one must be specified.
+	// +optional
+	Name string `json:"name,omitempty"`
 
 	// Namespace of the resource.
 	// If empty, uses cluster-scoped lookup or same namespace as evaluating resource.

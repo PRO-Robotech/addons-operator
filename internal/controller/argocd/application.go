@@ -252,49 +252,8 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 		return true, fmt.Sprintf("destination differs: existing=%+v, desired=%+v", existing.Spec.Destination, desired.Spec.Destination), nil
 	}
 
-	if existing.Spec.Source == nil && desired.Spec.Source != nil {
-		return true, "existing source is nil, desired is not", nil
-	}
-	if existing.Spec.Source != nil && desired.Spec.Source != nil {
-		if existing.Spec.Source.Chart != desired.Spec.Source.Chart {
-			return true, fmt.Sprintf("chart differs: existing=%q, desired=%q", existing.Spec.Source.Chart, desired.Spec.Source.Chart), nil
-		}
-		if existing.Spec.Source.Path != desired.Spec.Source.Path {
-			return true, fmt.Sprintf("path differs: existing=%q, desired=%q", existing.Spec.Source.Path, desired.Spec.Source.Path), nil
-		}
-		if existing.Spec.Source.RepoURL != desired.Spec.Source.RepoURL {
-			return true, fmt.Sprintf("repoURL differs: existing=%q, desired=%q", existing.Spec.Source.RepoURL, desired.Spec.Source.RepoURL), nil
-		}
-		if existing.Spec.Source.TargetRevision != desired.Spec.Source.TargetRevision {
-			return true, fmt.Sprintf("targetRevision differs: existing=%q, desired=%q", existing.Spec.Source.TargetRevision, desired.Spec.Source.TargetRevision), nil
-		}
-
-		if existing.Spec.Source.Helm == nil && desired.Spec.Source.Helm != nil {
-			return true, "existing helm is nil, desired is not", nil
-		}
-		if existing.Spec.Source.Helm != nil && desired.Spec.Source.Helm == nil {
-			return true, "existing helm is not nil, desired is nil", nil
-		}
-		if existing.Spec.Source.Helm != nil && desired.Spec.Source.Helm != nil {
-			if existing.Spec.Source.Helm.Values != desired.Spec.Source.Helm.Values {
-				return true, fmt.Sprintf("helm values differ: existing len=%d, desired len=%d", len(existing.Spec.Source.Helm.Values), len(desired.Spec.Source.Helm.Values)), nil
-			}
-			if existing.Spec.Source.Helm.ReleaseName != desired.Spec.Source.Helm.ReleaseName {
-				return true, fmt.Sprintf("helm releaseName differs: existing=%q, desired=%q", existing.Spec.Source.Helm.ReleaseName, desired.Spec.Source.Helm.ReleaseName), nil
-			}
-		}
-
-		if existing.Spec.Source.Plugin == nil && desired.Spec.Source.Plugin != nil {
-			return true, "existing plugin is nil, desired is not", nil
-		}
-		if existing.Spec.Source.Plugin != nil && desired.Spec.Source.Plugin == nil {
-			return true, "existing plugin is not nil, desired is nil", nil
-		}
-		if existing.Spec.Source.Plugin != nil && desired.Spec.Source.Plugin != nil {
-			if !existing.Spec.Source.Plugin.Equals(desired.Spec.Source.Plugin) {
-				return true, "plugin differs", nil
-			}
-		}
+	if needsUpdate, reason := b.needsSourceUpdate(existing.Spec.Source, desired.Spec.Source); needsUpdate {
+		return true, reason, nil
 	}
 
 	if !reflect.DeepEqual(existing.Spec.SyncPolicy, desired.Spec.SyncPolicy) {
@@ -306,4 +265,74 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 	}
 
 	return false, "", nil
+}
+
+// needsSourceUpdate compares two ApplicationSource specs and returns whether they differ.
+func (b *ApplicationBuilder) needsSourceUpdate(existing, desired *argocdv1alpha1.ApplicationSource) (bool, string) {
+	if existing == nil && desired != nil {
+		return true, "existing source is nil, desired is not"
+	}
+	if existing == nil || desired == nil {
+		return false, ""
+	}
+
+	if existing.Chart != desired.Chart {
+		return true, fmt.Sprintf("chart differs: existing=%q, desired=%q", existing.Chart, desired.Chart)
+	}
+	if existing.Path != desired.Path {
+		return true, fmt.Sprintf("path differs: existing=%q, desired=%q", existing.Path, desired.Path)
+	}
+	if existing.RepoURL != desired.RepoURL {
+		return true, fmt.Sprintf("repoURL differs: existing=%q, desired=%q", existing.RepoURL, desired.RepoURL)
+	}
+	if existing.TargetRevision != desired.TargetRevision {
+		return true, fmt.Sprintf("targetRevision differs: existing=%q, desired=%q", existing.TargetRevision, desired.TargetRevision)
+	}
+
+	if needsUpdate, reason := b.needsHelmUpdate(existing.Helm, desired.Helm); needsUpdate {
+		return true, reason
+	}
+
+	if needsUpdate, reason := b.needsPluginUpdate(existing.Plugin, desired.Plugin); needsUpdate {
+		return true, reason
+	}
+
+	return false, ""
+}
+
+// needsHelmUpdate compares two Helm source specs.
+func (b *ApplicationBuilder) needsHelmUpdate(existing, desired *argocdv1alpha1.ApplicationSourceHelm) (bool, string) {
+	if existing == nil && desired != nil {
+		return true, "existing helm is nil, desired is not"
+	}
+	if existing != nil && desired == nil {
+		return true, "existing helm is not nil, desired is nil"
+	}
+	if existing == nil {
+		return false, ""
+	}
+	if existing.Values != desired.Values {
+		return true, fmt.Sprintf("helm values differ: existing len=%d, desired len=%d", len(existing.Values), len(desired.Values))
+	}
+	if existing.ReleaseName != desired.ReleaseName {
+		return true, fmt.Sprintf("helm releaseName differs: existing=%q, desired=%q", existing.ReleaseName, desired.ReleaseName)
+	}
+	return false, ""
+}
+
+// needsPluginUpdate compares two Plugin source specs.
+func (b *ApplicationBuilder) needsPluginUpdate(existing, desired *argocdv1alpha1.ApplicationSourcePlugin) (bool, string) {
+	if existing == nil && desired != nil {
+		return true, "existing plugin is nil, desired is not"
+	}
+	if existing != nil && desired == nil {
+		return true, "existing plugin is not nil, desired is nil"
+	}
+	if existing == nil {
+		return false, ""
+	}
+	if !existing.Equals(desired) {
+		return true, "plugin differs"
+	}
+	return false, ""
 }

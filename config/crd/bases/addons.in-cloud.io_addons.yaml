@@ -275,7 +275,9 @@ spec:
                                 type: object
                                 x-kubernetes-map-type: atomic
                               name:
-                                description: Name of the resource.
+                                description: |-
+                                  Name of the resource.
+                                  Mutually exclusive with LabelSelector: exactly one must be specified.
                                 type: string
                               namespace:
                                 description: |-
@@ -285,7 +287,6 @@ spec:
                             required:
                             - apiVersion
                             - kind
-                            - name
                             type: object
                           value:
                             description: |-
@@ -405,7 +406,6 @@ spec:
                               Supported: "base64" (for Secret data).
                             enum:
                             - base64
-                            - ""
                             type: string
                           jsonPath:
                             description: |-
