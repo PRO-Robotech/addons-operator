@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект придерживается [Семантического версионирования](https://semver.org/lang/ru/).
 
+## [Unreleased]
+
+### Добавлено
+
+- **Каскадное удаление ресурсов** — новое поле `spec.finalizer` в Addon
+  - При `finalizer: true` на Argo CD Application устанавливается финалайзер `resources-finalizer.argocd.argoproj.io`
+  - При удалении Application Argo CD удаляет все созданные ресурсы перед удалением самого объекта
+  - По умолчанию поведение не изменилось — без `finalizer` удаляется только объект Application
+
 ## [0.1.0] - 2026-01-18
 
 Первый релиз Addon Operator.

@@ -74,6 +74,7 @@ spec:
 | `valuesSources` | Нет | Прямые источники values (Secret/ConfigMap) |
 | `variables` | Нет | Переменные для шаблонов |
 | `initDependencies` | Нет | Зависимости |
+| `finalizer` | Нет | Каскадное удаление ресурсов (`true`/`false`) |
 
 ## Проверка статуса Addon
 
@@ -142,7 +143,23 @@ kubectl edit addon prometheus
 kubectl delete addon prometheus
 ```
 
-Это также удалит связанный Argo CD Application.
+Это удалит связанный Argo CD Application.
+
+### Каскадное удаление ресурсов
+
+По умолчанию при удалении Addon удаляется только объект Application, а развёрнутые ресурсы (Deployments, Services и т.д.) **остаются** в кластере. Чтобы Argo CD удалил все созданные ресурсы вместе с Application, укажите `finalizer: true`:
+
+```yaml
+spec:
+  finalizer: true
+```
+
+| `finalizer` | Поведение при удалении |
+|-------------|----------------------|
+| `true` | Argo CD удалит все ресурсы, затем удалит Application |
+| `false` / не задано | Удаляется только объект Application, ресурсы остаются |
+
+> **Важно:** Каскадное удаление может занять время, так как Argo CD ожидает удаления всех управляемых ресурсов. Addon будет оставаться в состоянии удаления до завершения процесса.
 
 ## Мульти-кластерное развёртывание
 
