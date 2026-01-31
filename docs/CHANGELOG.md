@@ -9,6 +9,14 @@
 
 ### Добавлено
 
+- **Config Management Plugin** — новое поле `spec.pluginName` в Addon
+  - Позволяет использовать ArgoCD Config Management Plugin вместо встроенного Helm
+  - Values передаются через переменную окружения `HELM_VALUES` (base64-encoded YAML)
+
+- **Переопределение Release Name** — новое поле `spec.releaseName` в Addon
+  - В Helm режиме устанавливается в `source.helm.releaseName`
+  - В Plugin режиме передаётся как переменная окружения `RELEASE_NAME`
+
 - **Каскадное удаление ресурсов** — новое поле `spec.finalizer` в Addon
   - При `finalizer: true` на Argo CD Application устанавливается финалайзер `resources-finalizer.argocd.argoproj.io`
   - При удалении Application Argo CD удаляет все созданные ресурсы перед удалением самого объекта

@@ -63,18 +63,23 @@ spec:
 
 | Поле | Обязательно | Описание |
 |------|-------------|----------|
-| `chart` | Да | Имя Helm chart |
-| `repoURL` | Да | URL Helm репозитория |
-| `version` | Да | Версия chart |
+| `chart` | Да* | Имя Helm chart |
+| `path` | Нет* | Путь к директории с чартом (для Git) |
+| `repoURL` | Да | URL Helm или Git репозитория |
+| `version` | Да | Версия chart или Git ревизия |
 | `targetCluster` | Да | Целевой кластер (`in-cluster` или имя кластера) |
 | `targetNamespace` | Да | Namespace для развёртывания |
 | `backend.type` | Нет | Тип бэкенда (по умолчанию: `argocd`) |
 | `backend.namespace` | Да | Namespace бэкенда |
+| `pluginName` | Нет | ArgoCD Config Management Plugin (вместо Helm) |
+| `releaseName` | Нет | Переопределение имени Helm release |
 | `valuesSelectors` | Нет | Список селекторов values |
 | `valuesSources` | Нет | Прямые источники values (Secret/ConfigMap) |
 | `variables` | Нет | Переменные для шаблонов |
 | `initDependencies` | Нет | Зависимости |
 | `finalizer` | Нет | Каскадное удаление ресурсов (`true`/`false`) |
+
+\* Должен быть указан либо `chart`, либо `path`, но не оба одновременно.
 
 ## Проверка статуса Addon
 
@@ -122,6 +127,40 @@ kubectl get addon prometheus -o wide
 # Проверка конкретного condition
 kubectl get addon prometheus -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
 ```
+
+## Config Management Plugin
+
+Для использования ArgoCD Config Management Plugin вместо встроенного Helm укажите `pluginName`:
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: secrets-app
+spec:
+  chart: my-chart
+  repoURL: https://example.com/charts
+  version: "1.0.0"
+  targetCluster: in-cluster
+  targetNamespace: my-app
+  pluginName: helm-secrets
+  backend:
+    type: argocd
+    namespace: argocd
+```
+
+В режиме Plugin values передаются через переменную окружения `HELM_VALUES` (base64-encoded YAML), а не через `source.helm.values`.
+
+## Переопределение Release Name
+
+По умолчанию имя Helm release совпадает с именем Addon. Чтобы задать другое имя:
+
+```yaml
+spec:
+  releaseName: custom-release
+```
+
+Работает как в Helm режиме (`source.helm.releaseName`), так и в Plugin режиме (переменная окружения `RELEASE_NAME`).
 
 ## Обновление Addon
 

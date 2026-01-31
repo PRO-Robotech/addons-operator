@@ -20,6 +20,8 @@ Addon:
 | `path` | Нет* | Путь к директории с чартом (для Git репозиториев) |
 | `repoURL` | Да | URL Helm или Git репозитория |
 | `version` | Да | Версия chart или Git ревизия (branch, tag, commit) |
+| `pluginName` | Нет | Имя ArgoCD Config Management Plugin (заменяет встроенный Helm) |
+| `releaseName` | Нет | Переопределение имени Helm release |
 
 \* Должен быть указан либо `chart`, либо `path`, но не оба одновременно.
 
@@ -155,6 +157,31 @@ spec:
 
   targetCluster: in-cluster
   targetNamespace: my-app
+
+  backend:
+    type: argocd
+    namespace: argocd
+```
+
+### Пример с Config Management Plugin
+
+Для использования [ArgoCD CMP](https://argo-cd.readthedocs.io/en/stable/operator-manual/config-management-plugins/) вместо встроенного Helm укажите `pluginName`. Values передаются через переменную окружения `HELM_VALUES` (base64):
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: secrets-app
+spec:
+  chart: my-chart
+  repoURL: https://example.com/charts
+  version: "1.0.0"
+  targetCluster: in-cluster
+  targetNamespace: my-app
+
+  # Config Management Plugin вместо Helm
+  pluginName: helm-secrets
+  releaseName: custom-release
 
   backend:
     type: argocd
