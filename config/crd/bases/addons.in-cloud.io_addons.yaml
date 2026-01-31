@@ -313,6 +313,20 @@ spec:
                   Either Chart or Path must be specified, but not both.
                 maxLength: 253
                 type: string
+              pluginName:
+                description: |-
+                  PluginName specifies an ArgoCD Config Management Plugin to use instead of
+                  the built-in Helm source. When set, values are passed via HELM_VALUES
+                  environment variable (base64-encoded) instead of source.helm.values.
+                maxLength: 253
+                type: string
+              releaseName:
+                description: |-
+                  ReleaseName overrides the Helm release name. In Helm mode, it maps to
+                  source.helm.releaseName. In Plugin mode, it is passed as a RELEASE_NAME
+                  environment variable.
+                maxLength: 253
+                type: string
               repoURL:
                 description: RepoURL specifies the Helm repository URL.
                 maxLength: 2048

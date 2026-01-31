@@ -17,6 +17,7 @@ limitations under the License.
 package argocd
 
 import (
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"reflect"
@@ -54,6 +55,19 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 		return nil, fmt.Errorf("marshal values to YAML: %w", err)
 	}
 
+	source := &argocdv1alpha1.ApplicationSource{
+		Chart:          addon.Spec.Chart,
+		Path:           addon.Spec.Path,
+		RepoURL:        addon.Spec.RepoURL,
+		TargetRevision: addon.Spec.Version,
+	}
+
+	if addon.Spec.PluginName != "" {
+		source.Plugin = buildPluginSource(addon.Spec.PluginName, addon.Spec.ReleaseName, valuesYAML)
+	} else {
+		source.Helm = buildHelmSource(string(valuesYAML), addon.Spec.ReleaseName)
+	}
+
 	app := &argocdv1alpha1.Application{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "argoproj.io/v1alpha1",
@@ -78,16 +92,8 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 			},
 		},
 		Spec: argocdv1alpha1.ApplicationSpec{
-			Project: b.getProject(addon),
-			Source: &argocdv1alpha1.ApplicationSource{
-				Chart:          addon.Spec.Chart,
-				Path:           addon.Spec.Path,
-				RepoURL:        addon.Spec.RepoURL,
-				TargetRevision: addon.Spec.Version,
-				Helm: &argocdv1alpha1.ApplicationSourceHelm{
-					Values: string(valuesYAML),
-				},
-			},
+			Project:           b.getProject(addon),
+			Source:            source,
 			Destination:       b.getDestination(addon),
 			SyncPolicy:        b.getSyncPolicy(addon),
 			IgnoreDifferences: b.getIgnoreDifferences(addon),
@@ -95,6 +101,35 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 	}
 
 	return app, nil
+}
+
+func buildHelmSource(valuesYAML string, releaseName string) *argocdv1alpha1.ApplicationSourceHelm {
+	helm := &argocdv1alpha1.ApplicationSourceHelm{
+		Values: valuesYAML,
+	}
+	if releaseName != "" {
+		helm.ReleaseName = releaseName
+	}
+	return helm
+}
+
+func buildPluginSource(pluginName string, releaseName string, valuesYAML []byte) *argocdv1alpha1.ApplicationSourcePlugin {
+	env := argocdv1alpha1.Env{
+		&argocdv1alpha1.EnvEntry{
+			Name:  "HELM_VALUES",
+			Value: base64.StdEncoding.EncodeToString(valuesYAML),
+		},
+	}
+	if releaseName != "" {
+		env = append(env, &argocdv1alpha1.EnvEntry{
+			Name:  "RELEASE_NAME",
+			Value: releaseName,
+		})
+	}
+	return &argocdv1alpha1.ApplicationSourcePlugin{
+		Name: pluginName,
+		Env:  env,
+	}
 }
 
 func (b *ApplicationBuilder) getProject(addon *addonsv1alpha1.Addon) string {
@@ -237,9 +272,27 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 		if existing.Spec.Source.Helm == nil && desired.Spec.Source.Helm != nil {
 			return true, "existing helm is nil, desired is not", nil
 		}
+		if existing.Spec.Source.Helm != nil && desired.Spec.Source.Helm == nil {
+			return true, "existing helm is not nil, desired is nil", nil
+		}
 		if existing.Spec.Source.Helm != nil && desired.Spec.Source.Helm != nil {
 			if existing.Spec.Source.Helm.Values != desired.Spec.Source.Helm.Values {
 				return true, fmt.Sprintf("helm values differ: existing len=%d, desired len=%d", len(existing.Spec.Source.Helm.Values), len(desired.Spec.Source.Helm.Values)), nil
+			}
+			if existing.Spec.Source.Helm.ReleaseName != desired.Spec.Source.Helm.ReleaseName {
+				return true, fmt.Sprintf("helm releaseName differs: existing=%q, desired=%q", existing.Spec.Source.Helm.ReleaseName, desired.Spec.Source.Helm.ReleaseName), nil
+			}
+		}
+
+		if existing.Spec.Source.Plugin == nil && desired.Spec.Source.Plugin != nil {
+			return true, "existing plugin is nil, desired is not", nil
+		}
+		if existing.Spec.Source.Plugin != nil && desired.Spec.Source.Plugin == nil {
+			return true, "existing plugin is not nil, desired is nil", nil
+		}
+		if existing.Spec.Source.Plugin != nil && desired.Spec.Source.Plugin != nil {
+			if !existing.Spec.Source.Plugin.Equals(desired.Spec.Source.Plugin) {
+				return true, "plugin differs", nil
 			}
 		}
 	}

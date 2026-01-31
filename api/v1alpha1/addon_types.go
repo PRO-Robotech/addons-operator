@@ -81,6 +81,20 @@ type AddonSpec struct {
 	// +optional
 	Variables map[string]string `json:"variables,omitempty"`
 
+	// PluginName specifies an ArgoCD Config Management Plugin to use instead of
+	// the built-in Helm source. When set, values are passed via HELM_VALUES
+	// environment variable (base64-encoded) instead of source.helm.values.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	PluginName string `json:"pluginName,omitempty"`
+
+	// ReleaseName overrides the Helm release name. In Helm mode, it maps to
+	// source.helm.releaseName. In Plugin mode, it is passed as a RELEASE_NAME
+	// environment variable.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	ReleaseName string `json:"releaseName,omitempty"`
+
 	// InitDependencies specifies dependencies that must be ready
 	// before the Argo CD Application is created.
 	// Useful for ordered deployment (e.g., cert-manager before its consumers).
