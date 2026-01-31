@@ -42,8 +42,6 @@ const (
 	phaseFinalizerName  = "addons.in-cloud.io/phase-cleanup"
 	phaseRequeueAfter   = 30 * time.Second
 	phaseDependencyName = "depIndex"
-	addonAPIVersion     = "addons.in-cloud.io/v1alpha1"
-	addonKind           = "Addon"
 	phaseSetupTimeout   = 30 * time.Second
 )
 
@@ -212,7 +210,7 @@ func hasNonAddonSources(phase *addonsv1alpha1.AddonPhase) bool {
 	for _, rule := range phase.Spec.Rules {
 		for _, criterion := range rule.Criteria {
 			if criterion.Source != nil {
-				if criterion.Source.APIVersion != addonAPIVersion || criterion.Source.Kind != addonKind {
+				if criterion.Source.APIVersion != addonsv1alpha1.GroupVersion.String() || criterion.Source.Kind != addonsv1alpha1.AddonKind {
 					return true
 				}
 			}

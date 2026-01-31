@@ -35,10 +35,6 @@ const (
 	defaultProject       = "default"
 	defaultTargetCluster = "https://kubernetes.default.svc"
 	inClusterDestination = "in-cluster"
-
-	// Addon GVK for ownerReference - TypeMeta is not populated after Get()
-	addonAPIVersion = "addons.in-cloud.io/v1alpha1"
-	addonKind       = "Addon"
 )
 
 // ApplicationBuilder constructs Argo CD Application resources from Addon specs.
@@ -82,8 +78,8 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         addonAPIVersion,
-					Kind:               addonKind,
+					APIVersion:         addonsv1alpha1.GroupVersion.String(),
+					Kind:               addonsv1alpha1.AddonKind,
 					Name:               addon.Name,
 					UID:                addon.UID,
 					Controller:         ptr.To(true),
