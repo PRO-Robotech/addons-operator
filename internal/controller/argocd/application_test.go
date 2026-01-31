@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
@@ -1434,5 +1435,179 @@ func TestApplicationBuilder_NeedsUpdate_ReleaseNameChanges(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, needsUpdate, "should need update when releaseName changed")
 		assert.Contains(t, reason, "helm releaseName differs")
+	})
+}
+
+func TestApplicationBuilder_Build_WithFinalizer(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	baseAddon := func() *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+	}
+
+	t.Run("finalizer enabled", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		app, err := builder.Build(addon, "argocd", nil)
+		require.NoError(t, err)
+		assert.Contains(t, app.Finalizers, "resources-finalizer.argocd.argoproj.io")
+	})
+
+	t.Run("finalizer disabled", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(false)
+
+		app, err := builder.Build(addon, "argocd", nil)
+		require.NoError(t, err)
+		assert.Empty(t, app.Finalizers)
+	})
+
+	t.Run("finalizer nil", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = nil
+
+		app, err := builder.Build(addon, "argocd", nil)
+		require.NoError(t, err)
+		assert.Empty(t, app.Finalizers)
+	})
+}
+
+func TestApplicationBuilder_NeedsUpdate_Finalizer(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	baseAddon := func() *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+	}
+	values := map[string]any{}
+
+	t.Run("detects finalizer added", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		existing, err := builder.Build(baseAddon(), "argocd", values)
+		require.NoError(t, err)
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate)
+		assert.Contains(t, reason, "argocd resource finalizer differs")
+	})
+
+	t.Run("detects finalizer removed", func(t *testing.T) {
+		addonWithFinalizer := baseAddon()
+		addonWithFinalizer.Spec.Finalizer = ptr.To(true)
+
+		existing, err := builder.Build(addonWithFinalizer, "argocd", values)
+		require.NoError(t, err)
+
+		addonWithout := baseAddon()
+		addonWithout.Spec.Finalizer = ptr.To(false)
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addonWithout, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate)
+		assert.Contains(t, reason, "argocd resource finalizer differs")
+	})
+
+	t.Run("no update when both have finalizer", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		existing, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		needsUpdate, _, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate)
+	})
+
+	t.Run("no update when both lack finalizer", func(t *testing.T) {
+		addon := baseAddon()
+
+		existing, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		needsUpdate, _, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate)
+	})
+}
+
+func TestApplicationBuilder_UpdateSpec_Finalizer(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	baseAddon := func() *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+	}
+	values := map[string]any{}
+
+	t.Run("adds finalizer", func(t *testing.T) {
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+			},
+		}
+
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		err := builder.UpdateSpec(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.Contains(t, existing.Finalizers, "resources-finalizer.argocd.argoproj.io")
+	})
+
+	t.Run("removes finalizer", func(t *testing.T) {
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-addon",
+				Namespace:  "argocd",
+				Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+			},
+		}
+
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(false)
+
+		err := builder.UpdateSpec(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.NotContains(t, existing.Finalizers, "resources-finalizer.argocd.argoproj.io")
 	})
 }

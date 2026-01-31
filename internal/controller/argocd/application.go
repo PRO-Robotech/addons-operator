@@ -26,6 +26,7 @@ import (
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
@@ -35,6 +36,8 @@ const (
 	defaultProject       = "default"
 	defaultTargetCluster = "https://kubernetes.default.svc"
 	inClusterDestination = "in-cluster"
+
+	argocdResourcesFinalizer = "resources-finalizer.argocd.argoproj.io"
 )
 
 // ApplicationBuilder constructs Argo CD Application resources from Addon specs.
@@ -94,6 +97,10 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 			SyncPolicy:        b.getSyncPolicy(addon),
 			IgnoreDifferences: b.getIgnoreDifferences(addon),
 		},
+	}
+
+	if addon.Spec.Finalizer != nil && *addon.Spec.Finalizer {
+		app.Finalizers = []string{argocdResourcesFinalizer}
 	}
 
 	return app, nil
@@ -218,6 +225,12 @@ func (b *ApplicationBuilder) UpdateSpec(existing *argocdv1alpha1.Application, ad
 	}
 	maps.Copy(existing.Labels, desired.Labels)
 
+	if controllerutil.ContainsFinalizer(desired, argocdResourcesFinalizer) {
+		controllerutil.AddFinalizer(existing, argocdResourcesFinalizer)
+	} else {
+		controllerutil.RemoveFinalizer(existing, argocdResourcesFinalizer)
+	}
+
 	return nil
 }
 
@@ -258,6 +271,12 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 
 	if !reflect.DeepEqual(existing.Spec.IgnoreDifferences, desired.Spec.IgnoreDifferences) {
 		return true, "ignoreDifferences differs", nil
+	}
+
+	desiredFinalizer := controllerutil.ContainsFinalizer(desired, argocdResourcesFinalizer)
+	hasFinalizer := controllerutil.ContainsFinalizer(existing, argocdResourcesFinalizer)
+	if desiredFinalizer != hasFinalizer {
+		return true, "argocd resource finalizer differs", nil
 	}
 
 	return false, "", nil

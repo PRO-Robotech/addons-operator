@@ -174,6 +174,11 @@ spec:
                   Either Chart or Path must be specified, but not both.
                 maxLength: 253
                 type: string
+              finalizer:
+                description: |-
+                  Finalizer controls whether Argo CD resource finalizer is set on the Application.
+                  When true, deleting the Application will also delete all resources created by it.
+                type: boolean
               initDependencies:
                 description: |-
                   InitDependencies specifies dependencies that must be ready
