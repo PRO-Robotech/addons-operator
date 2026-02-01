@@ -17,7 +17,6 @@ limitations under the License.
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -26,7 +25,6 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
@@ -118,12 +116,21 @@ func createTestAddonValue(name, addonName string, values map[string]any, extraLa
 			Labels: labels,
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: runtime.RawExtension{Raw: mustMarshal(values)},
+			Values: string(mustMarshalYAML(values)),
 		},
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, av)).To(Succeed())
 	return av
+}
+
+// mustMarshalYAML marshals v to YAML or panics.
+func mustMarshalYAML(v any) []byte {
+	data, err := yaml.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }
 
 // createTestAddonPhase creates an AddonPhase for testing.
@@ -277,15 +284,6 @@ func getApplicationValues(app *argocdv1alpha1.Application) map[string]any {
 		return nil
 	}
 	return values
-}
-
-// mustMarshal marshals v to JSON or panics.
-func mustMarshal(v any) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return data
 }
 
 // deleteAddon deletes an Addon if it exists.

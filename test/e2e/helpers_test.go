@@ -157,9 +157,9 @@ func createTestAddonValue(name, addonName string, values map[string]interface{},
 		Spec: addonsv1alpha1.AddonValueSpec{},
 	}
 
-	// Set values if provided
+	// Set values if provided — marshal map to YAML string
 	if values != nil {
-		av.Spec.Values.Raw = mustMarshal(values)
+		av.Spec.Values = string(mustMarshalYAML(values))
 	}
 
 	Expect(k8sClient.Create(ctx, av)).To(Succeed(), "Failed to create AddonValue %s", name)

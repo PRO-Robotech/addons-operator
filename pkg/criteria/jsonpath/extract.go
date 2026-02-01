@@ -16,31 +16,34 @@ limitations under the License.
 
 package jsonpath
 
-// Extract extracts a value from an object using the parsed path segments.
-// Returns (value, found, error).
-// If the path is not found, returns (nil, false, nil) - not an error.
-func Extract(obj any, segments []PathSegment) (any, bool, error) {
-	if len(segments) == 0 {
+import (
+	"fmt"
+	"strings"
+
+	rfc9535 "github.com/theory/jsonpath"
+)
+
+// ExtractString extracts a value from obj using RFC 9535 JSONPath syntax.
+// Path must start with "$" (e.g., "$.status.phase").
+// obj must be a JSON-compatible type (map[string]any, []any, string, float64, bool, nil).
+// Returns (value, found, error). Missing path returns (nil, false, nil).
+func ExtractString(obj any, path string) (any, bool, error) {
+	if path == "" || path == "$" {
 		return obj, true, nil
 	}
-
-	current := obj
-	for _, seg := range segments {
-		val, found := seg.Extract(current)
-		if !found {
-			return nil, false, nil
-		}
-		current = val
+	if !strings.HasPrefix(path, "$") {
+		return nil, false, fmt.Errorf("path must start with '$': %q", path)
 	}
 
-	return current, true, nil
-}
-
-// ExtractString is a convenience function that parses the path and extracts the value.
-func ExtractString(obj any, path string) (any, bool, error) {
-	segments, err := Parse(path)
+	p, err := rfc9535.Parse(path)
 	if err != nil {
-		return nil, false, err
+		return nil, false, fmt.Errorf("invalid jsonPath %q: %w", path, err)
 	}
-	return Extract(obj, segments)
+
+	nodes := p.Select(obj)
+	if len(nodes) == 0 {
+		return nil, false, nil
+	}
+
+	return nodes[0], true, nil
 }

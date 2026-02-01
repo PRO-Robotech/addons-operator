@@ -57,7 +57,7 @@ func validateCriterion(criterion addonsv1alpha1.Criterion, path string) error {
 	}
 
 	if criterion.JSONPath != "" {
-		if _, err := jsonpath.Parse(criterion.JSONPath); err != nil {
+		if err := jsonpath.Parse(criterion.JSONPath); err != nil {
 			return fmt.Errorf("%s: invalid jsonPath %q: %w", path, criterion.JSONPath, err)
 		}
 	}

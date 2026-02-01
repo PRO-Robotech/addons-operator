@@ -131,7 +131,7 @@ var _ = Describe("AddonPhase Webhook", func() {
 					Name: "test-rule",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/phase",
+							JSONPath: "$.status.phase",
 							Operator: addonsv1alpha1.OperatorEqual,
 						},
 					},
@@ -164,7 +164,7 @@ var _ = Describe("AddonPhase Webhook", func() {
 					Name: "test-rule",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/phase",
+							JSONPath: "$.status.phase",
 							Operator: addonsv1alpha1.OperatorExists,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 						},
@@ -198,12 +198,12 @@ var _ = Describe("AddonPhase Webhook", func() {
 					Name: "test-rule",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/phase",
+							JSONPath: "$.status.phase",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 						},
 						{
-							JSONPath: "/status/ready",
+							JSONPath: "$.status.ready",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},

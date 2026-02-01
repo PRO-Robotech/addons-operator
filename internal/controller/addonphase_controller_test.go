@@ -126,7 +126,7 @@ var _ = Describe("AddonPhase Controller", func() {
 									Kind:       "Addon",
 									Name:       "non-existent-addon",
 								},
-								JSONPath: "/status/phase",
+								JSONPath: "$.status.phase",
 								Operator: addonsv1alpha1.OperatorEqual,
 								Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 							}},

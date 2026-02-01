@@ -63,6 +63,10 @@ type AddonReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
 
+	// Template engine for rendering Go templates in AddonValue strings.
+	// Stored in the reconciler to reuse the LRU template cache across reconciles.
+	templateEngine sources.TemplateEngine
+
 	// Dynamic watch components for SourceRef watches
 	watchManager dynamicwatch.WatchManager
 	tracker      dynamicwatch.Tracker
@@ -142,19 +146,16 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.updateStatus(ctx, addon, cm)
 	}
 
-	aggregatedValues, err := r.aggregateValues(ctx, addon)
-	if err != nil {
-		logger.Error(nil, "Failed to aggregate values", "addon", addon.Name, "reason", err.Error())
-		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonValueSourceError, err.Error())
-		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonValueSourceError, "Failed to aggregate AddonValues")
-		return r.updateStatus(ctx, addon, cm)
+	tmplCtx := sources.TemplateContext{
+		Variables: addon.Spec.Variables,
+		Values:    extractedValues,
 	}
 
-	finalValues, err := r.applyTemplates(aggregatedValues, addon, extractedValues)
+	finalValues, err := r.aggregateValues(ctx, addon, tmplCtx)
 	if err != nil {
-		logger.Error(nil, "Failed to apply templates", "addon", addon.Name, "reason", err.Error())
+		logger.Error(nil, "Failed to aggregate values", "addon", addon.Name, "reason", err.Error())
 		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonTemplateError, err.Error())
-		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonTemplateError, "Failed to render value templates")
+		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonTemplateError, "Failed to aggregate and render AddonValues")
 		return r.updateStatus(ctx, addon, cm)
 	}
 
@@ -254,9 +255,9 @@ func (r *AddonReconciler) checkDependencies(ctx context.Context, addon *addonsv1
 	return result.Satisfied, nil
 }
 
-func (r *AddonReconciler) aggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon) (map[string]any, error) {
-	aggregator := values.NewAggregator(r.Client)
-	return aggregator.AggregateValues(ctx, addon)
+func (r *AddonReconciler) aggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon, tmplCtx sources.TemplateContext) (map[string]any, error) {
+	aggregator := values.NewAggregator(r.Client, r.templateEngine)
+	return aggregator.AggregateValues(ctx, addon, tmplCtx)
 }
 
 // computeValuesHash computes and sets the hash of the final values.
@@ -390,6 +391,8 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
+
+	r.templateEngine = sources.NewTemplateEngine()
 
 	// Initialize dynamic watch components
 	r.resolver = dynamicwatch.NewResolver()
@@ -572,16 +575,6 @@ func (r *AddonReconciler) extractValuesSources(ctx context.Context, addon *addon
 
 	extractor := sources.NewExtractor(r.Client)
 	return extractor.Extract(ctx, addon.Spec.ValuesSources)
-}
-
-func (r *AddonReconciler) applyTemplates(aggregatedValues map[string]any, addon *addonsv1alpha1.Addon, extractedValues map[string]any) (map[string]any, error) {
-	ctx := sources.TemplateContext{
-		Variables: addon.Spec.Variables,
-		Values:    extractedValues,
-	}
-
-	engine := sources.NewTemplateEngine()
-	return engine.Apply(aggregatedValues, ctx)
 }
 
 // updateDynamicWatches updates watches based on the current valuesSources.

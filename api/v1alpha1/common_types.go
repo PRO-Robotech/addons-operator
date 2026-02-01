@@ -119,7 +119,9 @@ type Criterion struct {
 	Source *CriterionSource `json:"source,omitempty"`
 
 	// JSONPath specifies the path to the value in the resource.
-	// Uses RFC 6901 JSON Pointer syntax (e.g., "/status/phase").
+	// Uses RFC 9535 JSONPath syntax (e.g., "$.status.phase",
+	// "$.status.conditions[?@.type=='Ready'].status").
+	// For keys with dots, use bracket notation: "$.metadata.labels['app.kubernetes.io/name']".
 	// +kubebuilder:validation:Required
 	JSONPath string `json:"jsonPath"`
 

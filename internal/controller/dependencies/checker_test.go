@@ -87,7 +87,7 @@ func TestDependencyChecker_ApplicationExists(t *testing.T) {
 					Name: "nonexistent-addon",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -118,7 +118,7 @@ func TestDependencyChecker_DependencyNotFound(t *testing.T) {
 					Name: "nonexistent-addon",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -164,7 +164,7 @@ func TestDependencyChecker_DependencySatisfied(t *testing.T) {
 					Name: "cert-manager",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -209,7 +209,7 @@ func TestDependencyChecker_DependencyNotSatisfied(t *testing.T) {
 					Name: "cert-manager",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -223,7 +223,7 @@ func TestDependencyChecker_DependencyNotSatisfied(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, result.Satisfied)
 	assert.Contains(t, result.Reason, "Waiting for cert-manager")
-	assert.Contains(t, result.Reason, "/status/observedGeneration")
+	assert.Contains(t, result.Reason, ".status.observedGeneration")
 }
 
 func TestDependencyChecker_MultipleDependencies(t *testing.T) {
@@ -265,7 +265,7 @@ func TestDependencyChecker_MultipleDependencies(t *testing.T) {
 					Name: "cert-manager",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -275,7 +275,7 @@ func TestDependencyChecker_MultipleDependencies(t *testing.T) {
 					Name: "prometheus",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -320,7 +320,7 @@ func TestDependencyChecker_ExistsOperator(t *testing.T) {
 					Name: "cert-manager",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},
@@ -422,7 +422,7 @@ func TestDependencyChecker_PathNotFound(t *testing.T) {
 					Name: "cert-manager",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -467,12 +467,12 @@ func TestDependencyChecker_MultipleCriteria(t *testing.T) {
 					Name: "cert-manager",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},
@@ -542,7 +542,7 @@ func TestDependencyChecker_WithSource(t *testing.T) {
 								Name:       "my-secret",
 								Namespace:  "default", // Explicit namespace required
 							},
-							JSONPath: "/data/key",
+							JSONPath: "$.data.key",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},
@@ -587,7 +587,7 @@ func TestDependencyChecker_SourceNotFound(t *testing.T) {
 								Kind:       "Secret",
 								Name:       "nonexistent-secret",
 							},
-							JSONPath: "/data/key",
+							JSONPath: "$.data.key",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},

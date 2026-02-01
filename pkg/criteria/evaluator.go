@@ -25,16 +25,11 @@ import (
 )
 
 // Evaluator evaluates criteria against objects.
-type Evaluator struct {
-	// Cache for parsed JSONPath expressions (optional optimization)
-	pathCache map[string][]jsonpath.PathSegment
-}
+type Evaluator struct{}
 
 // NewEvaluator creates a new Evaluator instance.
 func NewEvaluator() *Evaluator {
-	return &Evaluator{
-		pathCache: make(map[string][]jsonpath.PathSegment),
-	}
+	return &Evaluator{}
 }
 
 // EvaluationResult contains the result of a criterion evaluation.
@@ -47,22 +42,12 @@ type EvaluationResult struct {
 // Evaluate evaluates a single criterion against an object.
 // Returns (satisfied, reason, error).
 func (e *Evaluator) Evaluate(obj any, path string, operator Operator, expected *apiextensionsv1.JSON) EvaluationResult {
-	// Parse JSONPath (with caching)
-	segments, err := e.parsePath(path)
+	// Extract value from object using RFC 9535 JSONPath
+	actual, found, err := jsonpath.ExtractString(obj, path)
 	if err != nil {
 		return EvaluationResult{
 			Satisfied: false,
 			Reason:    fmt.Sprintf("invalid path: %s", err),
-			Error:     err,
-		}
-	}
-
-	// Extract value from object
-	actual, found, err := jsonpath.Extract(obj, segments)
-	if err != nil {
-		return EvaluationResult{
-			Satisfied: false,
-			Reason:    fmt.Sprintf("extraction error: %s", err),
 			Error:     err,
 		}
 	}
@@ -114,21 +99,6 @@ type CriterionInput struct {
 	Path     string
 	Operator Operator
 	Expected *apiextensionsv1.JSON
-}
-
-// parsePath parses a JSONPath expression with caching.
-func (e *Evaluator) parsePath(path string) ([]jsonpath.PathSegment, error) {
-	if segments, ok := e.pathCache[path]; ok {
-		return segments, nil
-	}
-
-	segments, err := jsonpath.Parse(path)
-	if err != nil {
-		return nil, err
-	}
-
-	e.pathCache[path] = segments
-	return segments, nil
 }
 
 // evaluateOperator evaluates the appropriate operator.

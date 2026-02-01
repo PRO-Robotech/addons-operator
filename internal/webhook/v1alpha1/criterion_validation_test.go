@@ -29,7 +29,7 @@ var _ = Describe("Criterion Validation", func() {
 	Context("operator + value consistency", func() {
 		It("Should accept Equal with value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorEqual,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 			}
@@ -38,7 +38,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject Equal without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorEqual,
 			}
 			err := validateCriterion(criterion, "test")
@@ -48,7 +48,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject NotEqual without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorNotEqual,
 			}
 			err := validateCriterion(criterion, "test")
@@ -58,7 +58,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject In without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorIn,
 			}
 			err := validateCriterion(criterion, "test")
@@ -68,7 +68,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject GreaterThan without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/replicas",
+				JSONPath: "$.status.replicas",
 				Operator: addonsv1alpha1.OperatorGreaterThan,
 			}
 			err := validateCriterion(criterion, "test")
@@ -78,7 +78,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject Matches without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/version",
+				JSONPath: "$.status.version",
 				Operator: addonsv1alpha1.OperatorMatches,
 			}
 			err := validateCriterion(criterion, "test")
@@ -88,7 +88,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should accept Exists without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorExists,
 			}
 			Expect(validateCriterion(criterion, "test")).To(Succeed())
@@ -96,7 +96,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject Exists with value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorExists,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 			}
@@ -107,7 +107,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should accept NotExists without value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorNotExists,
 			}
 			Expect(validateCriterion(criterion, "test")).To(Succeed())
@@ -115,7 +115,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject NotExists with value", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorNotExists,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 			}
@@ -126,7 +126,7 @@ var _ = Describe("Criterion Validation", func() {
 	})
 
 	Context("JSONPath syntax validation", func() {
-		It("Should reject invalid jsonPath without leading slash", func() {
+		It("Should reject invalid jsonPath without leading dot", func() {
 			criterion := addonsv1alpha1.Criterion{
 				JSONPath: "status/phase",
 				Operator: addonsv1alpha1.OperatorEqual,
@@ -137,9 +137,9 @@ var _ = Describe("Criterion Validation", func() {
 			Expect(err.Error()).To(ContainSubstring("invalid jsonPath"))
 		})
 
-		It("Should reject unclosed bracket in jsonPath", func() {
+		It("Should reject invalid jsonPath expression", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/labels[app",
+				JSONPath: "$[invalid",
 				Operator: addonsv1alpha1.OperatorEqual,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 			}
@@ -150,7 +150,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should accept valid jsonPath", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/conditions[?(@.type=='Ready')]/status",
+				JSONPath: "$.status.conditions[?@.type=='Ready'].status",
 				Operator: addonsv1alpha1.OperatorEqual,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"True"`)},
 			}
@@ -161,7 +161,7 @@ var _ = Describe("Criterion Validation", func() {
 	Context("Matches regex validation", func() {
 		It("Should reject Matches with invalid regex", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/version",
+				JSONPath: "$.status.version",
 				Operator: addonsv1alpha1.OperatorMatches,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"[invalid"`)},
 			}
@@ -172,7 +172,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should accept Matches with valid regex", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/version",
+				JSONPath: "$.status.version",
 				Operator: addonsv1alpha1.OperatorMatches,
 				Value:    &apiextensionsv1.JSON{Raw: []byte(`"^v[0-9]+"`)},
 			}
@@ -183,7 +183,7 @@ var _ = Describe("Criterion Validation", func() {
 	Context("CriterionSource validation", func() {
 		It("Should accept source with name only", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorExists,
 				Source: &addonsv1alpha1.CriterionSource{
 					APIVersion: "v1",
@@ -196,7 +196,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should accept source with labelSelector only", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorExists,
 				Source: &addonsv1alpha1.CriterionSource{
 					APIVersion: "v1",
@@ -211,7 +211,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject source with both name and labelSelector", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorExists,
 				Source: &addonsv1alpha1.CriterionSource{
 					APIVersion: "v1",
@@ -229,7 +229,7 @@ var _ = Describe("Criterion Validation", func() {
 
 		It("Should reject source with neither name nor labelSelector", func() {
 			criterion := addonsv1alpha1.Criterion{
-				JSONPath: "/status/phase",
+				JSONPath: "$.status.phase",
 				Operator: addonsv1alpha1.OperatorExists,
 				Source: &addonsv1alpha1.CriterionSource{
 					APIVersion: "v1",
@@ -250,12 +250,12 @@ var _ = Describe("Criterion Validation", func() {
 		It("Should report the index of the failing criterion", func() {
 			criteria := []addonsv1alpha1.Criterion{
 				{
-					JSONPath: "/status/phase",
+					JSONPath: "$.status.phase",
 					Operator: addonsv1alpha1.OperatorEqual,
 					Value:    &apiextensionsv1.JSON{Raw: []byte(`"Ready"`)},
 				},
 				{
-					JSONPath: "/status/ready",
+					JSONPath: "$.status.ready",
 					Operator: addonsv1alpha1.OperatorEqual,
 					// Missing Value
 				},

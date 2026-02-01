@@ -95,7 +95,7 @@ func TestRuleEvaluator_CriteriaOnTargetAddon(t *testing.T) {
 					Name: "when-ready",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -147,7 +147,7 @@ func TestRuleEvaluator_CriteriaNotMet(t *testing.T) {
 					Name: "when-ready",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -220,7 +220,7 @@ func TestRuleEvaluator_ExternalSource(t *testing.T) {
 								Kind:       "Addon",
 								Name:       "cert-manager",
 							},
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -273,7 +273,7 @@ func TestRuleEvaluator_ExternalSourceNotFound(t *testing.T) {
 								Kind:       "Addon",
 								Name:       "non-existent",
 							},
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -322,12 +322,12 @@ func TestRuleEvaluator_MultipleCriteria(t *testing.T) {
 					Name: "multi-criteria",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
 						{
-							JSONPath: "/metadata/name",
+							JSONPath: "$.metadata.name",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`"test-phase"`)},
 						},
@@ -387,7 +387,7 @@ func TestRuleEvaluator_MultipleRules(t *testing.T) {
 					Name: "when-ready",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -402,7 +402,7 @@ func TestRuleEvaluator_MultipleRules(t *testing.T) {
 					Name: "when-failed",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`999`)},
 						},
@@ -463,7 +463,7 @@ func TestRuleEvaluator_ExistsOperator(t *testing.T) {
 					Name: "when-has-phase",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},
@@ -513,7 +513,7 @@ func TestRuleEvaluator_NotExistsOperator(t *testing.T) {
 					Name: "when-no-error",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/error",
+							JSONPath: "$.status.error",
 							Operator: addonsv1alpha1.OperatorNotExists,
 						},
 					},
@@ -564,7 +564,7 @@ func TestRuleEvaluator_InOperator(t *testing.T) {
 					Name: "when-phase-in-list",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorIn,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`[1, 2, 3]`)},
 						},

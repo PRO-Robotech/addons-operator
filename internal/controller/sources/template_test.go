@@ -265,6 +265,73 @@ func TestTemplateEngine_Apply(t *testing.T) {
 	})
 }
 
+func TestTemplateEngine_RenderString(t *testing.T) {
+	engine := NewTemplateEngine()
+
+	t.Run("no templates passthrough", func(t *testing.T) {
+		result, err := engine.RenderString("key: value\ncount: 42", TemplateContext{})
+		require.NoError(t, err)
+		assert.Equal(t, "key: value\ncount: 42", result)
+	})
+
+	t.Run("empty string", func(t *testing.T) {
+		result, err := engine.RenderString("", TemplateContext{})
+		require.NoError(t, err)
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("variables substitution", func(t *testing.T) {
+		ctx := TemplateContext{
+			Variables: map[string]string{
+				"cluster_name": "production",
+				"count":        "3",
+			},
+		}
+
+		result, err := engine.RenderString("cluster:\n  name: {{ .Variables.cluster_name }}\nreplicas: {{ .Variables.count }}", ctx)
+		require.NoError(t, err)
+		assert.Equal(t, "cluster:\n  name: production\nreplicas: 3", result)
+	})
+
+	t.Run("values from sources", func(t *testing.T) {
+		ctx := TemplateContext{
+			Values: map[string]any{
+				"network": map[string]any{"podCIDR": "10.244.0.0/16"},
+			},
+		}
+
+		result, err := engine.RenderString("podCIDR: {{ .Values.network.podCIDR }}", ctx)
+		require.NoError(t, err)
+		assert.Equal(t, "podCIDR: 10.244.0.0/16", result)
+	})
+
+	t.Run("missing variable error", func(t *testing.T) {
+		_, err := engine.RenderString("name: {{ .Variables.missing }}", TemplateContext{
+			Variables: map[string]string{},
+		})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "template execution error")
+	})
+
+	t.Run("invalid template syntax", func(t *testing.T) {
+		_, err := engine.RenderString("{{ .Variables.name | unknownFunc }}", TemplateContext{
+			Variables: map[string]string{"name": "test"},
+		})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "template parse error")
+	})
+
+	t.Run("sprig functions", func(t *testing.T) {
+		ctx := TemplateContext{
+			Variables: map[string]string{"name": "production"},
+		}
+
+		result, err := engine.RenderString("name: {{ .Variables.name | upper }}", ctx)
+		require.NoError(t, err)
+		assert.Equal(t, "name: PRODUCTION", result)
+	})
+}
+
 func TestTemplateCache(t *testing.T) {
 	engine := NewTemplateEngine().(*templateEngine)
 

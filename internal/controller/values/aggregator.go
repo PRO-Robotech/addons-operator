@@ -24,8 +24,10 @@ import (
 	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	"addons-operator/internal/controller/sources"
 )
 
 // AddonLabelPrefix is the prefix for all addon-related labels.
@@ -34,24 +36,27 @@ const AddonLabelPrefix = "addons.in-cloud.io/"
 
 // Aggregator collects and merges values from AddonValue resources.
 // It implements priority-based deep merge where higher priority values override lower ones.
+// Template expressions in AddonValue strings are rendered before YAML parsing.
 type Aggregator struct {
 	client client.Client
+	engine sources.TemplateEngine
 }
 
 // NewAggregator creates a new Aggregator instance.
-func NewAggregator(c client.Client) *Aggregator {
-	return &Aggregator{client: c}
+func NewAggregator(c client.Client, engine sources.TemplateEngine) *Aggregator {
+	return &Aggregator{client: c, engine: engine}
 }
 
-// AggregateValues collects and merges values from matching AddonValues.
+// AggregateValues collects, renders templates, and merges values from matching AddonValues.
 //
 // Algorithm:
 // 1. Collect selectors from spec.valuesSelectors + status.phaseValuesSelector
 // 2. Sort selectors by priority (ascending - lower first)
 // 3. For each selector: find AddonValues matching labels
 // 4. Sort matched AddonValues by name (stability)
-// 5. Deep merge values sequentially (higher priority wins)
-func (a *Aggregator) AggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon) (map[string]any, error) {
+// 5. Render templates in each AddonValue string, then parse YAML
+// 6. Deep merge values sequentially (higher priority wins)
+func (a *Aggregator) AggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon, tmplCtx sources.TemplateContext) (map[string]any, error) {
 	// Collect all selectors: static from spec + dynamic from status
 	allSelectors := collectSelectors(addon)
 
@@ -64,7 +69,7 @@ func (a *Aggregator) AggregateValues(ctx context.Context, addon *addonsv1alpha1.
 
 	// Process each selector in priority order
 	for _, selector := range allSelectors {
-		values, err := a.aggregateForSelector(ctx, selector)
+		values, err := a.aggregateForSelector(ctx, selector, tmplCtx)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +93,7 @@ func collectSelectors(addon *addonsv1alpha1.Addon) []addonsv1alpha1.ValuesSelect
 // aggregateForSelector finds and merges all AddonValues matching the selector.
 // Uses exact match for addon labels (only labels with addons.in-cloud.io/ prefix are compared).
 // Optimization: Uses server-side MatchingLabels as pre-filter, then exact match on the smaller set.
-func (a *Aggregator) aggregateForSelector(ctx context.Context, selector addonsv1alpha1.ValuesSelector) (map[string]any, error) {
+func (a *Aggregator) aggregateForSelector(ctx context.Context, selector addonsv1alpha1.ValuesSelector, tmplCtx sources.TemplateContext) (map[string]any, error) {
 	// Extract addon-prefixed labels for server-side pre-filtering
 	addonLabels := FilterAddonLabels(selector.MatchLabels)
 
@@ -118,11 +123,15 @@ func (a *Aggregator) aggregateForSelector(ctx context.Context, selector addonsv1
 
 	result := make(map[string]any)
 
-	// Merge values from each matching AddonValue
+	// Render templates, parse YAML, and merge values from each matching AddonValue
 	for _, av := range matchingValues {
-		values, err := UnmarshalValues(av.Spec.Values.Raw)
+		rendered, err := a.engine.RenderString(av.Spec.Values, tmplCtx)
 		if err != nil {
-			return nil, fmt.Errorf("unmarshal values from %s: %w", av.Name, err)
+			return nil, fmt.Errorf("render templates in %s: %w", av.Name, err)
+		}
+		values, err := ParseYAML(rendered)
+		if err != nil {
+			return nil, fmt.Errorf("parse values from %s: %w", av.Name, err)
 		}
 		result = DeepMerge(result, values)
 	}
@@ -130,23 +139,22 @@ func (a *Aggregator) aggregateForSelector(ctx context.Context, selector addonsv1
 	return result, nil
 }
 
-// UnmarshalValues converts runtime.RawExtension.Raw to map[string]any.
-func UnmarshalValues(raw []byte) (map[string]any, error) {
-	if len(raw) == 0 {
+// ParseYAML parses a YAML string into a map[string]any.
+func ParseYAML(yamlStr string) (map[string]any, error) {
+	if yamlStr == "" {
 		return make(map[string]any), nil
 	}
 
 	var result map[string]any
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal JSON: %w", err)
+	if err := yaml.Unmarshal([]byte(yamlStr), &result); err != nil {
+		return nil, fmt.Errorf("unmarshal YAML: %w", err)
+	}
+
+	if result == nil {
+		return make(map[string]any), nil
 	}
 
 	return result, nil
-}
-
-// UnmarshalRawExtension converts runtime.RawExtension to map[string]any.
-func UnmarshalRawExtension(ext []byte) (map[string]any, error) {
-	return UnmarshalValues(ext)
 }
 
 // DeepMerge performs strategic merge of two maps.

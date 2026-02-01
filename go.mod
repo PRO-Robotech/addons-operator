@@ -12,6 +12,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.20.2
 	github.com/onsi/gomega v1.34.2
 	github.com/stretchr/testify v1.11.1
+	github.com/theory/jsonpath v0.10.2
 	go.uber.org/zap v1.26.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.31.2

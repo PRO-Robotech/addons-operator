@@ -44,6 +44,10 @@ type TemplateContext struct {
 type TemplateEngine interface {
 	// Apply applies templates to values using the provided context.
 	Apply(values map[string]any, ctx TemplateContext) (map[string]any, error)
+
+	// RenderString renders Go templates within a raw string.
+	// If the string contains no template expressions, it is returned as-is.
+	RenderString(content string, ctx TemplateContext) (string, error)
 }
 
 type templateEngine struct {
@@ -88,6 +92,24 @@ func (e *templateEngine) Apply(values map[string]any, ctx TemplateContext) (map[
 	}
 
 	return result, nil
+}
+
+func (e *templateEngine) RenderString(content string, ctx TemplateContext) (string, error) {
+	if !containsTemplate(content) {
+		return content, nil
+	}
+
+	tmpl, err := e.cache.getOrParse(content)
+	if err != nil {
+		return "", fmt.Errorf("template parse error: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctx); err != nil {
+		return "", fmt.Errorf("template execution error: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 func containsTemplate(s string) bool {
