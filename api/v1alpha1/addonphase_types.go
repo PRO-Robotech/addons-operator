@@ -75,6 +75,12 @@ type RuleStatus struct {
 	// Matched indicates whether all criteria are currently satisfied.
 	Matched bool `json:"matched"`
 
+	// Latched indicates that keep=true criteria in this rule have previously
+	// matched and will be skipped on subsequent evaluations.
+	// Only keep=false criteria continue to be re-evaluated.
+	// +optional
+	Latched bool `json:"latched,omitempty"`
+
 	// Message provides additional context about the evaluation.
 	// +optional
 	Message string `json:"message,omitempty"`

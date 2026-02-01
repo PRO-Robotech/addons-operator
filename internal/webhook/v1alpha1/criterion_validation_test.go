@@ -242,6 +242,157 @@ var _ = Describe("Criterion Validation", func() {
 		})
 	})
 
+	Context("keep immutability validation", func() {
+		boolPtr := func(b bool) *bool { return &b }
+
+		It("Should allow update: keep nil→nil", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			Expect(validateKeepImmutability(oldPhase, newPhase)).To(Succeed())
+		})
+
+		It("Should allow update: keep nil→true", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules[0].Criteria[0].Keep = boolPtr(true)
+			Expect(validateKeepImmutability(oldPhase, newPhase)).To(Succeed())
+		})
+
+		It("Should allow update: keep true→nil", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+							Keep: boolPtr(true),
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules[0].Criteria[0].Keep = nil
+			Expect(validateKeepImmutability(oldPhase, newPhase)).To(Succeed())
+		})
+
+		It("Should reject update: keep nil→false", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules[0].Criteria[0].Keep = boolPtr(false)
+			err := validateKeepImmutability(oldPhase, newPhase)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("keep value is immutable"))
+		})
+
+		It("Should reject update: keep true→false", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+							Keep: boolPtr(true),
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules[0].Criteria[0].Keep = boolPtr(false)
+			err := validateKeepImmutability(oldPhase, newPhase)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("keep value is immutable"))
+		})
+
+		It("Should reject update: keep false→nil", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+							Keep: boolPtr(false),
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules[0].Criteria[0].Keep = nil
+			err := validateKeepImmutability(oldPhase, newPhase)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("keep value is immutable"))
+		})
+
+		It("Should allow adding a new rule", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules = append(newPhase.Spec.Rules, addonsv1alpha1.PhaseRule{
+				Name: "r2",
+				Criteria: []addonsv1alpha1.Criterion{{
+					JSONPath: "$.status.ready", Operator: addonsv1alpha1.OperatorExists,
+					Keep: boolPtr(false),
+				}},
+			})
+			Expect(validateKeepImmutability(oldPhase, newPhase)).To(Succeed())
+		})
+
+		It("Should allow when criteria count changes (new criteria beyond old length)", func() {
+			oldPhase := &addonsv1alpha1.AddonPhase{
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "r1",
+						Criteria: []addonsv1alpha1.Criterion{{
+							JSONPath: "$.status.phase", Operator: addonsv1alpha1.OperatorExists,
+						}},
+					}},
+				},
+			}
+			newPhase := oldPhase.DeepCopy()
+			newPhase.Spec.Rules[0].Criteria = append(newPhase.Spec.Rules[0].Criteria,
+				addonsv1alpha1.Criterion{
+					JSONPath: "$.status.ready", Operator: addonsv1alpha1.OperatorExists,
+					Keep: boolPtr(false),
+				},
+			)
+			Expect(validateKeepImmutability(oldPhase, newPhase)).To(Succeed())
+		})
+	})
+
 	Context("validateCriteria batch validation", func() {
 		It("Should accept empty criteria", func() {
 			Expect(validateCriteria(nil, "test")).To(Succeed())

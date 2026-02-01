@@ -133,6 +133,12 @@ type Criterion struct {
 	// Use JSON encoding for non-string values.
 	// +optional
 	Value *apiextensionsv1.JSON `json:"value,omitempty"`
+
+	// Keep controls whether this criterion participates in rule latching.
+	// When true (default), once the rule matches, it stays matched permanently.
+	// When false, the rule is re-evaluated every reconcile cycle.
+	// +optional
+	Keep *bool `json:"keep,omitempty"`
 }
 
 // CriterionSource identifies a Kubernetes resource to evaluate.

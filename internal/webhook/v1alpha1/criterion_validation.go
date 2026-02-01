@@ -103,6 +103,45 @@ func validateCriteria(criteria []addonsv1alpha1.Criterion, pathPrefix string) er
 	return nil
 }
 
+// validateKeepImmutability checks that the effective keep value of existing criteria
+// has not changed between old and new specs. nil and *true are equivalent (both mean keep=true).
+func validateKeepImmutability(oldPhase, newPhase *addonsv1alpha1.AddonPhase) error {
+	oldRules := make(map[string]addonsv1alpha1.PhaseRule, len(oldPhase.Spec.Rules))
+	for _, r := range oldPhase.Spec.Rules {
+		oldRules[r.Name] = r
+	}
+
+	for _, newRule := range newPhase.Spec.Rules {
+		oldRule, exists := oldRules[newRule.Name]
+		if !exists {
+			continue
+		}
+
+		minLen := len(oldRule.Criteria)
+		if len(newRule.Criteria) < minLen {
+			minLen = len(newRule.Criteria)
+		}
+
+		for i := 0; i < minLen; i++ {
+			oldEffective := effectiveKeep(oldRule.Criteria[i].Keep)
+			newEffective := effectiveKeep(newRule.Criteria[i].Keep)
+			if oldEffective != newEffective {
+				return fmt.Errorf("spec.rules[%s].criteria[%d]: keep value is immutable (was %v, got %v)",
+					newRule.Name, i, oldEffective, newEffective)
+			}
+		}
+	}
+
+	return nil
+}
+
+func effectiveKeep(keep *bool) bool {
+	if keep == nil {
+		return true
+	}
+	return *keep
+}
+
 // extractStringValue extracts a string from apiextensionsv1.JSON.
 func extractStringValue(j *apiextensionsv1.JSON) (string, error) {
 	if j == nil || len(j.Raw) == 0 {

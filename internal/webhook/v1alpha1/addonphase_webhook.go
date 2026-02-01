@@ -63,7 +63,12 @@ func (v *AddonPhaseCustomValidator) ValidateCreate(ctx context.Context, obj runt
 }
 
 // ValidateUpdate validates AddonPhase on update.
-func (v *AddonPhaseCustomValidator) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
+func (v *AddonPhaseCustomValidator) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	oldPhase, ok := oldObj.(*addonsv1alpha1.AddonPhase)
+	if !ok {
+		return nil, fmt.Errorf("expected an AddonPhase object for the oldObj but got %T", oldObj)
+	}
+
 	addonphase, ok := newObj.(*addonsv1alpha1.AddonPhase)
 	if !ok {
 		return nil, fmt.Errorf("expected an AddonPhase object for the newObj but got %T", newObj)
@@ -74,6 +79,10 @@ func (v *AddonPhaseCustomValidator) ValidateUpdate(ctx context.Context, _, newOb
 	// The Addon may already be deleted at this point
 	if !addonphase.DeletionTimestamp.IsZero() {
 		return nil, nil
+	}
+
+	if err := validateKeepImmutability(oldPhase, addonphase); err != nil {
+		return nil, err
 	}
 
 	return nil, v.validateAddonPhase(ctx, addonphase)

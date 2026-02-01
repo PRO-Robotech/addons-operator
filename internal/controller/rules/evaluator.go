@@ -48,18 +48,24 @@ func (e *RuleEvaluator) EvaluateRules(
 	targetAddon *addonsv1alpha1.Addon,
 ) ([]addonsv1alpha1.RuleStatus, []addonsv1alpha1.ValuesSelector, error) {
 
+	previousStatuses := buildPreviousStatusMap(phase)
 	ruleStatuses := make([]addonsv1alpha1.RuleStatus, 0, len(phase.Spec.Rules))
 	activeSelectors := make([]addonsv1alpha1.ValuesSelector, 0, len(phase.Spec.Rules))
 
 	for _, rule := range phase.Spec.Rules {
-		matched, message, err := e.evaluateRule(ctx, rule, targetAddon)
+		prev := previousStatuses[rule.Name]
+
+		matched, message, err := e.evaluateRule(ctx, rule, targetAddon, prev.Latched)
 		if err != nil {
 			return nil, nil, fmt.Errorf("evaluate rule %s: %w", rule.Name, err)
 		}
 
+		latched := matched && hasKeepableCriteria(rule)
+
 		ruleStatuses = append(ruleStatuses, addonsv1alpha1.RuleStatus{
 			Name:          rule.Name,
 			Matched:       matched,
+			Latched:       latched,
 			Message:       message,
 			LastEvaluated: metav1.Now(),
 		})
@@ -72,16 +78,42 @@ func (e *RuleEvaluator) EvaluateRules(
 	return ruleStatuses, activeSelectors, nil
 }
 
+func buildPreviousStatusMap(phase *addonsv1alpha1.AddonPhase) map[string]addonsv1alpha1.RuleStatus {
+	m := make(map[string]addonsv1alpha1.RuleStatus, len(phase.Status.RuleStatuses))
+	for _, rs := range phase.Status.RuleStatuses {
+		m[rs.Name] = rs
+	}
+	return m
+}
+
+func hasKeepableCriteria(rule addonsv1alpha1.PhaseRule) bool {
+	for _, c := range rule.Criteria {
+		if c.Keep == nil || *c.Keep {
+			return true
+		}
+	}
+	return len(rule.Criteria) == 0
+}
+
+func isKeepCriterion(c addonsv1alpha1.Criterion) bool {
+	return c.Keep == nil || *c.Keep
+}
+
 func (e *RuleEvaluator) evaluateRule(
 	ctx context.Context,
 	rule addonsv1alpha1.PhaseRule,
 	targetAddon *addonsv1alpha1.Addon,
+	previouslyLatched bool,
 ) (bool, string, error) {
 	if len(rule.Criteria) == 0 {
 		return true, "No conditions", nil
 	}
 
 	for i, criterion := range rule.Criteria {
+		if previouslyLatched && isKeepCriterion(criterion) {
+			continue
+		}
+
 		matched, reason, err := e.evaluateCriterion(ctx, criterion, targetAddon)
 		if err != nil {
 			return false, "", fmt.Errorf("criterion %d: %w", i, err)
