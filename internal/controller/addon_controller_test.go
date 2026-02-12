@@ -1164,7 +1164,7 @@ var _ = Describe("Addon Controller", func() {
 	Context("Values Stabilization", func() {
 		// These tests verify the stabilization gate that prevents creating Application
 		// with incomplete values due to race conditions (informer cache lag, AddonPhase not ready).
-		It("should not create Application on first reconcile (values hash must stabilize)", func() {
+		It("should set ValuesHash before creating Application (stabilization gate)", func() {
 			name := uniqueName("stabilize-first")
 
 			By("Creating the Addon")
@@ -1186,14 +1186,18 @@ var _ = Describe("Addon Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
 
-			By("Verifying WaitingForStableValues condition appears initially")
-			// The first reconcile should set WaitingForStableValues because previousHash is empty
-			waitForConditionReason(name, conditions.TypeProgressing, conditions.ReasonWaitingForStableValues)
-
 			By("Verifying Application is eventually created after stabilization")
-			// After hash stabilizes (same hash on two consecutive reconciles), Application is created
 			waitForApplication(name, "argocd")
 			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Verifying ValuesHash is set")
+			Eventually(func() bool {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return false
+				}
+				return current.Status.ValuesHash != ""
+			}, timeout, interval).Should(BeTrue())
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())

@@ -447,6 +447,7 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
+				WithKeep(false).
 				Build()
 
 			targetPhase = createTestAddonPhase(targetName,
@@ -520,6 +521,7 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 				WithSource("v1", "Secret", secretName, testNamespace).
 				WithJSONPath("$.data").
 				WithOperator(addonsv1alpha1.OperatorExists).
+				WithKeep(false).
 				Build()
 
 			targetPhase = createTestAddonPhase(targetName,

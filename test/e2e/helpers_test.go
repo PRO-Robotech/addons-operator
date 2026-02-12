@@ -635,6 +635,12 @@ func (b *CriterionBuilder) WithValue(v interface{}) *CriterionBuilder {
 	return b
 }
 
+// WithKeep sets the keep (rule latching) flag for the criterion.
+func (b *CriterionBuilder) WithKeep(keep bool) *CriterionBuilder {
+	b.criterion.Keep = &keep
+	return b
+}
+
 // Build returns the constructed Criterion.
 func (b *CriterionBuilder) Build() addonsv1alpha1.Criterion {
 	return b.criterion
