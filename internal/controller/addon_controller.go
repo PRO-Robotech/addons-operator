@@ -418,7 +418,7 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 
 // updateStatusAndRequeue updates status and returns a requeue result with the specified interval.
 // This is used when the controller needs to wait before proceeding (e.g., stabilization gate).
-func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager, interval time.Duration) (ctrl.Result, error) {
+func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, _ *conditions.Manager, interval time.Duration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	addon.Status.ObservedGeneration = addon.Generation
