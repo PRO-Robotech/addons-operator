@@ -1161,6 +1161,198 @@ var _ = Describe("Addon Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 		})
 	})
+	Context("Values Stabilization", func() {
+		// These tests verify the stabilization gate that prevents creating Application
+		// with incomplete values due to race conditions (informer cache lag, AddonPhase not ready).
+		It("should not create Application on first reconcile (values hash must stabilize)", func() {
+			name := uniqueName("stabilize-first")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Verifying WaitingForStableValues condition appears initially")
+			// The first reconcile should set WaitingForStableValues because previousHash is empty
+			waitForConditionReason(name, conditions.TypeProgressing, conditions.ReasonWaitingForStableValues)
+
+			By("Verifying Application is eventually created after stabilization")
+			// After hash stabilizes (same hash on two consecutive reconciles), Application is created
+			waitForApplication(name, "argocd")
+			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should create Application after hash stabilizes", func() {
+			name := uniqueName("stabilize-complete")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created (stabilization complete)")
+			waitForApplication(name, "argocd")
+
+			By("Verifying ValuesHash is set")
+			Eventually(func() bool {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return false
+				}
+				return current.Status.ValuesHash != ""
+			}, timeout, interval).Should(BeTrue())
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should defer Application creation if values change between reconciles", func() {
+			name := uniqueName("stabilize-late-value")
+			avName := uniqueName("late-value")
+
+			By("Creating the Addon with valuesSelector")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+					ValuesSelectors: []addonsv1alpha1.ValuesSelector{{
+						Name:        "default",
+						Priority:    0,
+						MatchLabels: map[string]string{"addons.in-cloud.io/addon": name},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Creating AddonValue shortly after Addon (simulating late arrival)")
+			// This simulates the race condition where AddonValue arrives after first reconcile
+			av := &addonsv1alpha1.AddonValue{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: avName,
+					Labels: map[string]string{
+						"addons.in-cloud.io/addon": name,
+					},
+				},
+				Spec: addonsv1alpha1.AddonValueSpec{
+					Values: "lateKey: lateValue",
+				},
+			}
+			Expect(k8sClient.Create(ctx, av)).To(Succeed())
+
+			By("Waiting for Application to be created with the values")
+			Eventually(func() map[string]any {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return nil
+				}
+				return getApplicationValues(app)
+			}, timeout, interval).Should(HaveKeyWithValue("lateKey", "lateValue"))
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, av)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should update existing Application without stabilization delay", func() {
+			name := uniqueName("stabilize-update")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created")
+			waitForApplication(name, "argocd")
+			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Recording initial state")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			initialHash := addon.Status.ValuesHash
+
+			By("Updating Addon version (triggers Application update)")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			addon.Spec.Version = "2.0.0"
+			Expect(k8sClient.Update(ctx, addon)).To(Succeed())
+
+			By("Verifying Application is updated without WaitingForStableValues")
+			// Updates to existing Application should bypass the stabilization gate
+			Eventually(func() string {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return ""
+				}
+				return app.Spec.Source.TargetRevision
+			}, timeout, interval).Should(Equal("2.0.0"))
+
+			By("Verifying hash is updated (spec change doesn't require stabilization)")
+			// For existing Application, hash just changes - no stabilization needed
+			Eventually(func() string {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return ""
+				}
+				return current.Status.ValuesHash
+			}, timeout, interval).Should(Equal(initialHash)) // Hash is from values only, version doesn't change it
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
 	Context("Large Scale Scenarios", Label("large-scale"), func() {
 		// These tests verify behavior with multiple Addons.
 		// Use "ginkgo --label-filter=large-scale" to run these specifically.

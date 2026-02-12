@@ -48,6 +48,7 @@ import (
 
 const (
 	requeueIntervalDegraded  = 60 * time.Second
+	requeueIntervalStabilize = 1 * time.Second
 	finalizerName            = "addons.in-cloud.io/finalizer"
 	addonLabelKey            = "addons.in-cloud.io/addon"
 	valuesSourcesIndexKey    = "spec.valuesSources.sourceRef"
@@ -159,9 +160,25 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.updateStatus(ctx, addon, cm)
 	}
 
+	previousHash := addon.Status.ValuesHash
+
 	// Compute hash from final values (includes both aggregated values and extracted values after templates)
 	r.computeValuesHash(ctx, addon, finalValues)
 	cm.SetOperationalCondition(conditions.TypeValuesResolved, true, "ValuesResolved", "All values successfully resolved")
+
+	exists, checkErr := r.applicationExists(ctx, addon)
+	if checkErr != nil {
+		return ctrl.Result{}, checkErr
+	}
+
+	if !exists && (previousHash == "" || previousHash != addon.Status.ValuesHash) {
+		logger.Info("Deferring Application creation until values stabilize",
+			"previousHash", previousHash, "newHash", addon.Status.ValuesHash)
+		cm.SetProgressing(conditions.ReasonWaitingForStableValues,
+			conditions.ReasonWaitingForStableValues,
+			"Waiting for values to stabilize before creating Application")
+		return r.updateStatusAndRequeue(ctx, addon, cm, requeueIntervalStabilize)
+	}
 
 	if err := r.reconcileApplication(ctx, addon, finalValues); err != nil {
 		logger.Error(nil, "Failed to reconcile Application", "addon", addon.Name, "reason", err.Error())
@@ -272,6 +289,19 @@ func (r *AddonReconciler) computeValuesHash(ctx context.Context, addon *addonsv1
 		hash = ""
 	}
 	addon.Status.ValuesHash = hash
+}
+
+// applicationExists checks if the Argo CD Application for this Addon already exists.
+func (r *AddonReconciler) applicationExists(ctx context.Context, addon *addonsv1alpha1.Addon) (bool, error) {
+	app := &argocdv1alpha1.Application{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      addon.Name,
+		Namespace: addon.Spec.Backend.Namespace,
+	}, app)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addonsv1alpha1.Addon, helmValues map[string]any) error {
@@ -386,6 +416,25 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// updateStatusAndRequeue updates status and returns a requeue result with the specified interval.
+// This is used when the controller needs to wait before proceeding (e.g., stabilization gate).
+func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager, interval time.Duration) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	addon.Status.ObservedGeneration = addon.Generation
+
+	if err := r.Status().Update(ctx, addon); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		logger.Error(err, "Failed to update Addon status")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: interval}, nil
 }
 
 func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
