@@ -31,7 +31,7 @@ spec:
   initDependencies:
     - name: cert-manager
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```
@@ -69,17 +69,17 @@ spec:
   initDependencies:
     - name: cert-manager
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
     - name: external-secrets
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
     - name: cilium
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```
@@ -93,7 +93,7 @@ spec:
   initDependencies:
     - name: cert-manager
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```
@@ -112,7 +112,7 @@ spec:
             kind: Secret
             name: database-credentials
             namespace: default
-          jsonPath: /data/password
+          jsonPath: $.data.password
           operator: Exists
 ```
 
@@ -141,7 +141,7 @@ spec:
   initDependencies:
     - name: cilium
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 
@@ -156,7 +156,7 @@ spec:
   initDependencies:
     - name: cert-manager
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```
@@ -169,7 +169,7 @@ spec:
     - name: cert-manager
       criteria:
         # Проверка готовности cert-manager
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
         # Ожидание существования ClusterIssuer CRD
@@ -177,7 +177,7 @@ spec:
             apiVersion: apiextensions.k8s.io/v1
             kind: CustomResourceDefinition
             name: clusterissuers.cert-manager.io
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```
@@ -189,7 +189,7 @@ spec:
   initDependencies:
     - name: cert-manager
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
     - name: cluster-issuer-ready
@@ -198,14 +198,14 @@ spec:
             apiVersion: cert-manager.io/v1
             kind: ClusterIssuer
             name: letsencrypt-prod
-          jsonPath: /status/conditions/0/type
+          jsonPath: $.status.conditions[0].type
           operator: Equal
           value: "Ready"
         - source:
             apiVersion: cert-manager.io/v1
             kind: ClusterIssuer
             name: letsencrypt-prod
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```

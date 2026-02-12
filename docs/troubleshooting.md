@@ -157,12 +157,74 @@ status:
 3. Убедитесь, что ожидаемое значение совпадает:
    ```yaml
    criteria:
-     - jsonPath: /status/conditions/0/status
+     - jsonPath: $.status.conditions[0].status
        operator: Equal
        value: "True"  # Должно точно совпадать
    ```
 
-### 6. Values не объединяются правильно
+### 6. Правило AddonPhase не деактивируется (latched)
+
+**Симптом:**
+```yaml
+status:
+  ruleStatuses:
+    - name: enable-tls
+      matched: true
+      latched: true
+      message: "All conditions satisfied"
+```
+
+Правило продолжает совпадать, хотя исходный ресурс больше не удовлетворяет criteria.
+
+**Причина:** Criteria с `keep: true` (по умолчанию) фиксируются при первом совпадении и больше не перевычисляются. Это защита от каскадных сбоев.
+
+**Решение:**
+
+Если нужно сбросить фиксацию:
+
+1. Удалите и пересоздайте AddonPhase:
+   ```bash
+   kubectl delete addonphase my-app
+   kubectl apply -f addonphase.yaml
+   ```
+
+2. Или переименуйте правило в spec (фиксация привязана к имени):
+   ```yaml
+   # Было: name: enable-tls
+   name: enable-tls-v2
+   ```
+
+Если правило должно перевычисляться каждый цикл, используйте `keep: false`:
+```yaml
+criteria:
+  - jsonPath: $.status.conditions[0].status
+    operator: Equal
+    value: "True"
+    keep: false  # перевычисляется каждый цикл
+```
+
+Подробнее: [Фиксация правил (Latching)](user-guide/rule-latching.md).
+
+### 7. Невозможно изменить keep на существующем AddonPhase
+
+**Симптом:**
+```
+Error: admission webhook "vaddonphase-v1alpha1.kb.io" denied the request:
+spec.rules[enable-tls].criteria[0]: keep value is immutable (was true, got false)
+```
+
+**Причина:** Поле `keep` является неизменяемым после создания для защиты целостности фиксации.
+
+**Решение:**
+
+Удалите AddonPhase и создайте заново с нужным значением `keep`:
+```bash
+kubectl delete addonphase my-app
+# Отредактируйте YAML с нужным keep: false
+kubectl apply -f addonphase.yaml
+```
+
+### 8. Values не объединяются правильно
 
 **Симптом:** Итоговые values не включают ожидаемые values из некоторых AddonValue.
 
@@ -191,7 +253,7 @@ status:
    ```
 3. Помните: больший приоритет (99) перезаписывает меньший (0).
 
-### 7. Application Out of Sync
+### 9. Application Out of Sync
 
 **Симптом:** Argo CD Application показывает статус OutOfSync.
 
@@ -211,7 +273,7 @@ status:
    kubectl describe application -n argocd <name>
    ```
 
-### 8. Автоматический retry при ошибках
+### 10. Автоматический retry при ошибках
 
 **Поведение:** Addon в состоянии `Degraded` автоматически повторяет reconciliation каждые 60 секунд.
 
@@ -219,7 +281,7 @@ status:
 - Не нужно вручную перезапускать контроллер при временных ошибках
 - Если проблема устранена (например, создан отсутствующий Secret), Addon восстановится автоматически
 
-### 9. valuesSources на недоступный CRD
+### 11. valuesSources на недоступный CRD
 
 **Симптом:**
 ```

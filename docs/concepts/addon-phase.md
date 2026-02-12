@@ -33,12 +33,13 @@ AddonPhase:
 
 Каждый criterion вычисляет условие:
 
-| Поле | Обязательно | Описание |
-|------|-------------|----------|
-| `source` | Нет | Внешний ресурс для вычисления (по умолчанию: целевой Addon) |
-| `jsonPath` | Да | Путь к значению (например, `/status/conditions/0/status`) |
-| `operator` | Да | Оператор сравнения |
-| `value` | Нет | Ожидаемое значение (обязательно для большинства операторов) |
+| Поле | Обязательно | По умолчанию | Описание |
+|------|-------------|--------------|----------|
+| `source` | Нет | - | Внешний ресурс для вычисления (по умолчанию: целевой Addon) |
+| `jsonPath` | Да | - | RFC 9535 JSONPath (например, `$.status.conditions[0].status`) |
+| `operator` | Да | - | Оператор сравнения |
+| `value` | Нет | - | Ожидаемое значение (обязательно для большинства операторов) |
+| `keep` | Нет | true | Фиксация правила после совпадения (см. [Latching](#latching)) |
 
 ### Source
 
@@ -76,7 +77,7 @@ spec:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: cert-manager
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
       selector:
@@ -85,6 +86,51 @@ spec:
         matchLabels:
           addons.in-cloud.io/addon: cilium
           addons.in-cloud.io/feature.certificates: "true"
+```
+
+## Latching
+
+По умолчанию (`keep: true` или не указан), criteria **фиксируются** индивидуально при первом совпадении правила. Зафиксированный criterion пропускается при перевычислении — считается автоматически выполненным. Это предотвращает каскадные сбои при временной недоступности зависимости (например, во время обновления cert-manager).
+
+**Как работает:**
+- Criteria с `keep=true` (или не указан) фиксируются при первом совпадении правила и больше не перевычисляются
+- Criteria с `keep: false` продолжают перевычисляться каждый цикл
+- Можно комбинировать: зависимость фиксируется (`keep=true`), а динамическое условие продолжает проверяться (`keep: false`)
+- Если ВСЕ criteria имеют `keep: false`, правило никогда не фиксируется
+- Зафиксированное правило можно «сбросить» только удалив и пересоздав AddonPhase, или переименовав правило
+
+**Пример с комбинацией keep:**
+
+```yaml
+rules:
+  - name: ha-with-tls
+    criteria:
+      # Фиксируется навсегда — cert-manager может временно упасть
+      - source:
+          apiVersion: addons.in-cloud.io/v1alpha1
+          kind: Addon
+          name: cert-manager
+        jsonPath: $.status.conditions[?@.type=='Ready'].status
+        operator: Equal
+        value: "True"
+        # keep: true (по умолчанию)
+
+      # Перевычисляется каждый цикл — при масштабировании вниз правило деактивируется
+      - source:
+          apiVersion: apps/v1
+          kind: Deployment
+          name: my-app
+          namespace: default
+        jsonPath: $.spec.replicas
+        operator: GreaterOrEqual
+        value: 3
+        keep: false
+    selector:
+      name: ha-tls-values
+      priority: 20
+      matchLabels:
+        addons.in-cloud.io/addon: my-app
+        addons.in-cloud.io/feature.ha-tls: "true"
 ```
 
 ## Status
@@ -98,8 +144,9 @@ status:
       matched: true
       message: "No conditions"
     - name: certificates
-      matched: false
-      message: "Criterion failed: cert-manager conditions/0/status != True"
+      matched: true
+      latched: true  # Зафиксировано — останется совпавшим навсегда
+      message: "Latched (keep)"
 ```
 
 ## Операторы
@@ -120,15 +167,16 @@ status:
 
 ## Синтаксис JSONPath
 
-Criteria используют упрощённую нотацию JSONPath:
+Criteria используют RFC 9535 JSONPath нотацию:
 
 ```
-/status/conditions/0/status  → status.conditions[0].status
-/metadata/annotations        → metadata.annotations
-/spec/replicas               → spec.replicas
+$.status.conditions[0].status    → первый condition status
+$.metadata.annotations           → все annotations
+$.spec.replicas                  → replicas из spec
+$.status.conditions[?@.type=='Ready'].status → фильтр по type
 ```
 
-**Важно:** Используйте префикс `/` для JSONPath в criteria (не `.`).
+**Важно:** Используйте префикс `$` для JSONPath в criteria (RFC 9535).
 
 ## Как это работает
 
@@ -194,4 +242,5 @@ selector:
 
 - [Addon](addon.md) — цель phaseValuesSelector
 - [AddonValue](addon-value.md) — values, выбираемые правилами
+- [Фиксация правил (Latching)](../user-guide/rule-latching.md) — подробное руководство по полю `keep`
 - [Операторы Criteria](../reference/criteria-operators.md) — полный справочник операторов

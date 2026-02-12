@@ -10,7 +10,7 @@
 
 ```yaml
 criteria:
-  - jsonPath: /status/conditions/0/status
+  - jsonPath: $.status.conditions[?@.type=='Ready'].status
     operator: Equal
     value: "True"
 ```
@@ -21,7 +21,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /status/conditions/0/status
+  - jsonPath: $.status.conditions[?@.type=='Ready'].status
     operator: NotEqual
     value: "False"
 ```
@@ -34,7 +34,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /metadata/labels/environment
+  - jsonPath: $.metadata.labels.environment
     operator: In
     value: ["production", "staging"]
 ```
@@ -45,7 +45,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /metadata/labels/environment
+  - jsonPath: $.metadata.labels.environment
     operator: NotIn
     value: ["development", "test"]
 ```
@@ -58,7 +58,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /status/applicationRef
+  - jsonPath: $.status.applicationRef
     operator: Exists
     # Значение не требуется
 ```
@@ -69,7 +69,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /status/error
+  - jsonPath: $.status.error
     operator: NotExists
     # Значение не требуется
 ```
@@ -82,7 +82,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /spec/replicas
+  - jsonPath: $.spec.replicas
     operator: GreaterThan
     value: 1
 ```
@@ -93,7 +93,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /spec/replicas
+  - jsonPath: $.spec.replicas
     operator: GreaterOrEqual
     value: 2
 ```
@@ -104,7 +104,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /spec/replicas
+  - jsonPath: $.spec.replicas
     operator: LessThan
     value: 10
 ```
@@ -115,7 +115,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /spec/replicas
+  - jsonPath: $.spec.replicas
     operator: LessOrEqual
     value: 5
 ```
@@ -128,7 +128,7 @@ criteria:
 
 ```yaml
 criteria:
-  - jsonPath: /metadata/name
+  - jsonPath: $.metadata.name
     operator: Matches
     value: "^prod-.*"
 ```
@@ -183,12 +183,14 @@ value: null
 
 ## Синтаксис JSONPath
 
-Criteria используют нотацию JSONPath с префиксом `/`:
+Criteria используют RFC 9535 JSONPath синтаксис (`github.com/theory/jsonpath`). Путь начинается с `$`:
 
 ```
-/status/conditions/0/status    → status.conditions[0].status
-/metadata/annotations/key      → metadata.annotations["key"]
-/spec/template/spec/containers/0/name → spec.template.spec.containers[0].name
+$.status.phase                                   → status.phase
+$.status.conditions[0].status                    → первый condition
+$.status.conditions[?@.type=='Ready'].status     → filter по type
+$.metadata.labels['app.kubernetes.io/name']      → ключ с точками (bracket notation)
+$.spec.template.spec.containers[0].name          → вложенный массив
 ```
 
 ## Примеры
@@ -199,10 +201,10 @@ Criteria используют нотацию JSONPath с префиксом `/`:
 
 ```yaml
 criteria:
-  - jsonPath: /status/conditions/0/status
+  - jsonPath: $.status.conditions[?@.type=='Ready'].status
     operator: Equal
     value: "True"
-  - jsonPath: /spec/replicas
+  - jsonPath: $.spec.replicas
     operator: GreaterOrEqual
     value: 2
 ```
@@ -217,7 +219,7 @@ criteria:
       apiVersion: addons.in-cloud.io/v1alpha1
       kind: Addon
       name: cert-manager
-    jsonPath: /status/conditions/0/status
+    jsonPath: $.status.conditions[?@.type=='Ready'].status
     operator: Equal
     value: "True"
 ```
@@ -233,7 +235,7 @@ criteria:
       kind: Application
       name: my-app
       namespace: argocd
-    jsonPath: /status/health/status
+    jsonPath: $.status.health.status
     operator: Equal
     value: "Healthy"
 ```
@@ -248,7 +250,7 @@ criteria:
       apiVersion: addons.in-cloud.io/v1alpha1
       kind: Addon
       name: dependency-addon
-    jsonPath: /status/conditions/0/status
+    jsonPath: $.status.conditions[?@.type=='Ready'].status
     operator: Equal
     value: "True"
 ```
