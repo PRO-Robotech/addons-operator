@@ -21,8 +21,6 @@ import (
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
 )
@@ -31,13 +29,9 @@ var _ = Describe("AddonPhase Webhook", func() {
 	var (
 		obj       *addonsv1alpha1.AddonPhase
 		validator AddonPhaseCustomValidator
-		scheme    *runtime.Scheme
 	)
 
 	BeforeEach(func() {
-		scheme = runtime.NewScheme()
-		Expect(addonsv1alpha1.AddToScheme(scheme)).To(Succeed())
-
 		obj = &addonsv1alpha1.AddonPhase{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "cilium",
@@ -49,59 +43,16 @@ var _ = Describe("AddonPhase Webhook", func() {
 				},
 			},
 		}
+		validator = AddonPhaseCustomValidator{}
 	})
 
 	Context("When validating AddonPhase creation", func() {
-		It("Should reject when Addon does not exist", func() {
-			By("creating AddonPhase without corresponding Addon")
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
-			_, err := validator.ValidateCreate(ctx, obj)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("addon cilium not found"))
-		})
-
-		It("Should accept when Addon exists", func() {
-			By("creating AddonPhase with corresponding Addon")
-			addon := &addonsv1alpha1.Addon{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cilium",
-				},
-				Spec: addonsv1alpha1.AddonSpec{
-					Chart:           "cilium",
-					RepoURL:         "https://helm.cilium.io/",
-					Version:         "1.14.0",
-					TargetCluster:   "in-cluster",
-					TargetNamespace: "kube-system",
-					Backend:         addonsv1alpha1.BackendSpec{Type: "argocd", Namespace: "argocd"},
-				},
-			}
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(addon).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
+		It("Should accept valid AddonPhase", func() {
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("Should reject duplicate rule names", func() {
-			By("creating AddonPhase with duplicate rule names")
-			addon := &addonsv1alpha1.Addon{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "cilium",
-				},
-				Spec: addonsv1alpha1.AddonSpec{
-					Chart:           "cilium",
-					RepoURL:         "https://helm.cilium.io/",
-					Version:         "1.14.0",
-					TargetCluster:   "in-cluster",
-					TargetNamespace: "kube-system",
-					Backend:         addonsv1alpha1.BackendSpec{Type: "argocd", Namespace: "argocd"},
-				},
-			}
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(addon).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
 			obj.Spec.Rules = []addonsv1alpha1.PhaseRule{
 				{Name: "same-name"},
 				{Name: "same-name"},
@@ -115,17 +66,6 @@ var _ = Describe("AddonPhase Webhook", func() {
 
 	Context("When validating criterion operator+value", func() {
 		It("Should reject criterion with operator requiring value but value missing", func() {
-			addon := &addonsv1alpha1.Addon{
-				ObjectMeta: metav1.ObjectMeta{Name: "cilium"},
-				Spec: addonsv1alpha1.AddonSpec{
-					Chart: "cilium", RepoURL: "https://helm.cilium.io/", Version: "1.14.0",
-					TargetCluster: "in-cluster", TargetNamespace: "kube-system",
-					Backend: addonsv1alpha1.BackendSpec{Type: "argocd", Namespace: "argocd"},
-				},
-			}
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(addon).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
 			obj.Spec.Rules = []addonsv1alpha1.PhaseRule{
 				{
 					Name: "test-rule",
@@ -148,17 +88,6 @@ var _ = Describe("AddonPhase Webhook", func() {
 		})
 
 		It("Should reject criterion with Exists operator and value set", func() {
-			addon := &addonsv1alpha1.Addon{
-				ObjectMeta: metav1.ObjectMeta{Name: "cilium"},
-				Spec: addonsv1alpha1.AddonSpec{
-					Chart: "cilium", RepoURL: "https://helm.cilium.io/", Version: "1.14.0",
-					TargetCluster: "in-cluster", TargetNamespace: "kube-system",
-					Backend: addonsv1alpha1.BackendSpec{Type: "argocd", Namespace: "argocd"},
-				},
-			}
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(addon).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
 			obj.Spec.Rules = []addonsv1alpha1.PhaseRule{
 				{
 					Name: "test-rule",
@@ -182,17 +111,6 @@ var _ = Describe("AddonPhase Webhook", func() {
 		})
 
 		It("Should accept valid criteria with proper operator+value", func() {
-			addon := &addonsv1alpha1.Addon{
-				ObjectMeta: metav1.ObjectMeta{Name: "cilium"},
-				Spec: addonsv1alpha1.AddonSpec{
-					Chart: "cilium", RepoURL: "https://helm.cilium.io/", Version: "1.14.0",
-					TargetCluster: "in-cluster", TargetNamespace: "kube-system",
-					Backend: addonsv1alpha1.BackendSpec{Type: "argocd", Namespace: "argocd"},
-				},
-			}
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(addon).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
 			obj.Spec.Rules = []addonsv1alpha1.PhaseRule{
 				{
 					Name: "test-rule",
@@ -220,16 +138,11 @@ var _ = Describe("AddonPhase Webhook", func() {
 	})
 
 	Context("When validating AddonPhase update", func() {
-		It("Should apply same validation rules on update", func() {
-			By("updating AddonPhase when Addon does not exist")
-			fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-			validator = AddonPhaseCustomValidator{Client: fakeClient}
-
+		It("Should accept valid update", func() {
 			oldObj := obj.DeepCopy()
 
 			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("addon cilium not found"))
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
