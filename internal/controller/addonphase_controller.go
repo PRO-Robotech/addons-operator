@@ -82,8 +82,6 @@ func (r *AddonPhaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	cm.SetProgressing(conditions.ReasonReconciling, conditions.ReasonReconciling, "Evaluating rules")
-
 	addon := &addonsv1alpha1.Addon{}
 	if err := r.Get(ctx, req.NamespacedName, addon); err != nil {
 		if apierrors.IsNotFound(err) {

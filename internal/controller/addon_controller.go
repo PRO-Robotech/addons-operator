@@ -122,8 +122,6 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.updateStatus(ctx, addon, cm)
 	}
 
-	cm.SetProgressing(conditions.ReasonInitializing, conditions.ReasonReconciling, "Reconciliation in progress")
-
 	dependenciesMet, err := r.checkDependencies(ctx, addon)
 	if err != nil {
 		logger.Error(nil, "Failed to check dependencies", "addon", addon.Name, "reason", err.Error())
