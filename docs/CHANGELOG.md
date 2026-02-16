@@ -22,6 +22,35 @@
   - При удалении Application Argo CD удаляет все созданные ресурсы перед удалением самого объекта
   - По умолчанию поведение не изменилось — без `finalizer` удаляется только объект Application
 
+- **RFC 9535 JSONPath** — миграция criteria engine на RFC 9535 JSONPath синтаксис (`$.status.conditions[?@.type=='Ready'].status`). Все JSONPath теперь начинаются с `$`.
+
+- **Фиксация правил (Rule Latching)** — поле `keep` в Criterion:
+  - `keep: true` (по умолчанию) — criterion фиксируется после первого совпадения
+  - `keep: false` — criterion перевычисляется каждый цикл
+  - Поле `latched` в `RuleStatus` показывает зафиксированные правила
+  - `keep` неизменяем после создания (webhook)
+
+- **Стабилизация values** — при первом создании Application, контроллер дожидается стабилизации хеша values (два последовательных reconcile с одинаковым хешем). Предотвращает race condition при одновременном создании Addon и зависимых ресурсов.
+
+- **Пауза reconciliation** — аннотация `addons.in-cloud.io/paused=true` останавливает reconcile Addon для ручной отладки Application в ArgoCD.
+
+- **Статус первого развёртывания** — новое поле `status.deployed` в Addon
+  - Устанавливается в `true` при первом успешном развёртывании (Synced + Healthy)
+  - Никогда не сбрасывается обратно в `false` (latching)
+  - Позволяет отличить «никогда не был развёрнут» от «был развёрнут, но сейчас нездоров»
+  - Доступно через `kubectl get addon` (колонка Deployed)
+  - Можно использовать в criteria: `$.status.deployed`
+
+### Изменено
+
+- **AddonPhase webhook** — убрана проверка существования Addon при создании AddonPhase. Теперь AddonPhase можно создавать до Addon (use case: предварительная заготовка через Helm chart). Контроллер ставит condition `TargetAddonNotFound` и ждёт появления Addon.
+
+- **JSONPath синтаксис** — изменён с простого пути на RFC 9535 (с `$` префиксом). Требуется обновление существующих AddonPhase/Addon ресурсов при миграции.
+
+### Исправлено
+
+- **Цикл обновления conditions** — контроллеры Addon и AddonPhase могли бесконечно обновлять status из-за промежуточного изменения `LastTransitionTime` в conditions. Исправлено удалением избыточного `SetProgressing` в начале reconcile.
+
 ## [0.1.0] - 2026-01-18
 
 Первый релиз Addon Operator.

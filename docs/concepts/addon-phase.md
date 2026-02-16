@@ -9,6 +9,7 @@ AddonPhase:
 - Определяет **правила** с criteria, которые вычисляются по состоянию кластера
 - Когда правила совпадают, их **селекторы** добавляются в Addon
 - Включает динамическую активацию фич без ручного вмешательства
+- **Можно создавать до Addon** — контроллер ждёт появления Addon (condition `TargetAddonNotFound`)
 
 ## Сценарии использования
 
@@ -70,16 +71,16 @@ spec:
           addons.in-cloud.io/addon: cilium
           addons.in-cloud.io/feature.hubble: "true"
 
-    # Условное правило — активируется когда cert-manager Ready
+    # Условное правило — активируется когда cert-manager был развёрнут хотя бы раз
     - name: certificates
       criteria:
         - source:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: cert-manager
-          jsonPath: $.status.conditions[0].status
+          jsonPath: $.status.deployed
           operator: Equal
-          value: "True"
+          value: true
       selector:
         name: certificates
         priority: 20

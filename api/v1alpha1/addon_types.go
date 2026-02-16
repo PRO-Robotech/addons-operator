@@ -128,6 +128,11 @@ type AddonStatus struct {
 	// +optional
 	ValuesHash string `json:"valuesHash,omitempty"`
 
+	// Deployed indicates that the Addon has been successfully deployed at least once.
+	// Once set to true, this field is never reset to false.
+	// +optional
+	Deployed bool `json:"deployed,omitempty"`
+
 	// Conditions represent the current state of the Addon.
 	// Primary conditions: Ready, Progressing, Degraded.
 	// Operational conditions: DependenciesMet, ValuesResolved, ApplicationCreated, Synced, Healthy.
@@ -143,6 +148,7 @@ type AddonStatus struct {
 // +kubebuilder:printcolumn:name="Chart",type=string,JSONPath=`.spec.chart`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Deployed",type=boolean,JSONPath=`.status.deployed`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Addon is the primary resource for managing Helm-based deployments.

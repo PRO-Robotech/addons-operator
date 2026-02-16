@@ -21,6 +21,7 @@ import (
 	"time"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/gitops-engine/pkg/health"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -1352,6 +1353,77 @@ var _ = Describe("Addon Controller", func() {
 				}
 				return current.Status.ValuesHash
 			}, timeout, interval).Should(Equal(initialHash)) // Hash is from values only, version doesn't change it
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
+	Context("Deployed Latching", func() {
+		It("should set Deployed=true when Synced+Healthy and keep it true when unhealthy", func() {
+			name := uniqueName("deployed-latch")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: name,
+				},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created")
+			waitForApplication(name, "argocd")
+
+			By("Verifying Deployed is initially false")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			Expect(addon.Status.Deployed).To(BeFalse())
+
+			By("Setting Application status to Synced+Healthy")
+			Eventually(func() error {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return err
+				}
+				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+				app.Status.Health.Status = health.HealthStatusHealthy
+				return k8sClient.Update(ctx, app)
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying Deployed becomes true")
+			Eventually(func() bool {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return false
+				}
+				return current.Status.Deployed
+			}, timeout, interval).Should(BeTrue())
+
+			By("Setting Application status to Degraded")
+			Eventually(func() error {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return err
+				}
+				app.Status.Health.Status = health.HealthStatusDegraded
+				return k8sClient.Update(ctx, app)
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying Deployed stays true even when unhealthy")
+			// Wait for the controller to process the degraded status
+			waitForConditionReason(name, conditions.TypeHealthy, "Degraded")
+			// After processing, Deployed must still be true
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			Expect(addon.Status.Deployed).To(BeTrue())
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
