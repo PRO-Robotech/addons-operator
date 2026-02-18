@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-18
+
 ### Добавлено
 
 - **Config Management Plugin** — новое поле `spec.pluginName` в Addon
@@ -120,4 +122,5 @@
 
 ---
 
+[0.2.0]: https://github.com/PRO-Robotech/addons-operator/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PRO-Robotech/addons-operator/releases/tag/v0.1.0
