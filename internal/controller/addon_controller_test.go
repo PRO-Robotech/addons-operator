@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	addonctrl "addons-operator/internal/controller/addon"
 	"addons-operator/internal/controller/conditions"
 )
 
@@ -64,7 +65,7 @@ var _ = Describe("Addon Controller", func() {
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
 		})
 	})
-	Context("findAddonsForAddonValue", func() {
+	Context("FindAddonsForAddonValue", func() {
 		ctx := context.Background()
 		It("should return addon when AddonValue labels match selector", func() {
 			name := uniqueName("selector-match")
@@ -106,11 +107,11 @@ var _ = Describe("Addon Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
 			// Test the handler function
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			Expect(requests).To(HaveLen(1))
 			Expect(requests[0].Name).To(Equal(name))
 			Expect(requests[0].Namespace).To(BeEmpty())
@@ -170,11 +171,11 @@ var _ = Describe("Addon Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
 			// Test: should return both addons
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			Expect(requests).To(HaveLen(2))
 			names := []string{requests[0].Name, requests[1].Name}
 			Expect(names).To(ContainElements(name1, name2))
@@ -217,11 +218,11 @@ var _ = Describe("Addon Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			// Should not match: addon's selector says "other-addon" but AddonValue has "completely-different"
 			Expect(requests).To(BeEmpty())
 			// Cleanup
@@ -242,11 +243,11 @@ var _ = Describe("Addon Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			Expect(requests).To(BeEmpty())
 			// Cleanup
 			Expect(k8sClient.Delete(ctx, av)).To(Succeed())

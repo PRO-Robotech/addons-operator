@@ -39,6 +39,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	addonctrl "addons-operator/internal/controller/addon"
+	addonphasectrl "addons-operator/internal/controller/addonphase"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -131,7 +133,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Setup Addon controller
-	err = (&AddonReconciler{
+	err = (&addonctrl.AddonReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addon-controller"),
@@ -139,7 +141,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Setup AddonPhase controller
-	err = (&AddonPhaseReconciler{
+	err = (&addonphasectrl.AddonPhaseReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addonphase-controller"),

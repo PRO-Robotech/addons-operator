@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package addon
 
 import (
 	"context"
@@ -509,7 +509,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&argocdv1alpha1.Application{}).
 		Watches(
 			&addonsv1alpha1.AddonValue{},
-			handler.EnqueueRequestsFromMapFunc(r.findAddonsForAddonValue),
+			handler.EnqueueRequestsFromMapFunc(r.FindAddonsForAddonValue),
 		).
 		Watches(
 			&addonsv1alpha1.Addon{},
@@ -544,7 +544,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return nil
 }
 
-func (r *AddonReconciler) findAddonsForAddonValue(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *AddonReconciler) FindAddonsForAddonValue(ctx context.Context, obj client.Object) []reconcile.Request {
 	av, ok := obj.(*addonsv1alpha1.AddonValue)
 	if !ok {
 		return nil

@@ -41,7 +41,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
-	"addons-operator/internal/controller"
+	addonctrl "addons-operator/internal/controller/addon"
+	addonphasectrl "addons-operator/internal/controller/addonphase"
 	"addons-operator/internal/health"
 	webhookv1alpha1 "addons-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
@@ -218,7 +219,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AddonReconciler{
+	if err := (&addonctrl.AddonReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addon-controller"),
@@ -226,7 +227,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Addon")
 		os.Exit(1)
 	}
-	if err := (&controller.AddonPhaseReconciler{
+	if err := (&addonphasectrl.AddonPhaseReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addonphase-controller"),
