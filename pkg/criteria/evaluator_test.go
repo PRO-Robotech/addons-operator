@@ -32,7 +32,6 @@ func jsonValueEval(s string) *apiextensionsv1.JSON {
 func TestNewEvaluator(t *testing.T) {
 	e := NewEvaluator()
 	require.NotNil(t, e)
-	require.NotNil(t, e.pathCache)
 }
 
 func TestEvaluator_Evaluate(t *testing.T) {
@@ -65,154 +64,154 @@ func TestEvaluator_Evaluate(t *testing.T) {
 	}{
 		{
 			name:      "equal satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorEqual,
 			expected:  jsonValueEval(`"Running"`),
 			satisfied: true,
 		},
 		{
 			name:      "equal not satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorEqual,
 			expected:  jsonValueEval(`"Pending"`),
 			satisfied: false,
 		},
 		{
 			name:      "not equal satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorNotEqual,
 			expected:  jsonValueEval(`"Pending"`),
 			satisfied: true,
 		},
 		{
 			name:      "greater than satisfied",
-			path:      "/status/replicas",
+			path:      "$.status.replicas",
 			operator:  OperatorGreaterThan,
 			expected:  jsonValueEval(`2`),
 			satisfied: true,
 		},
 		{
 			name:      "greater than not satisfied",
-			path:      "/status/replicas",
+			path:      "$.status.replicas",
 			operator:  OperatorGreaterThan,
 			expected:  jsonValueEval(`5`),
 			satisfied: false,
 		},
 		{
 			name:      "greater or equal satisfied (equal)",
-			path:      "/status/replicas",
+			path:      "$.status.replicas",
 			operator:  OperatorGreaterOrEqual,
 			expected:  jsonValueEval(`3`),
 			satisfied: true,
 		},
 		{
 			name:      "less than satisfied",
-			path:      "/status/replicas",
+			path:      "$.status.replicas",
 			operator:  OperatorLessThan,
 			expected:  jsonValueEval(`5`),
 			satisfied: true,
 		},
 		{
 			name:      "less or equal satisfied (equal)",
-			path:      "/status/replicas",
+			path:      "$.status.replicas",
 			operator:  OperatorLessOrEqual,
 			expected:  jsonValueEval(`3`),
 			satisfied: true,
 		},
 		{
 			name:      "in satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorIn,
 			expected:  jsonValueEval(`["Running", "Pending", "Succeeded"]`),
 			satisfied: true,
 		},
 		{
 			name:      "in not satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorIn,
 			expected:  jsonValueEval(`["Pending", "Failed"]`),
 			satisfied: false,
 		},
 		{
 			name:      "not in satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorNotIn,
 			expected:  jsonValueEval(`["Pending", "Failed"]`),
 			satisfied: true,
 		},
 		{
 			name:      "exists satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorExists,
 			expected:  nil,
 			satisfied: true,
 		},
 		{
 			name:      "exists not satisfied",
-			path:      "/status/nonexistent",
+			path:      "$.status.nonexistent",
 			operator:  OperatorExists,
 			expected:  nil,
 			satisfied: false,
 		},
 		{
 			name:      "not exists satisfied",
-			path:      "/status/nonexistent",
+			path:      "$.status.nonexistent",
 			operator:  OperatorNotExists,
 			expected:  nil,
 			satisfied: true,
 		},
 		{
 			name:      "not exists not satisfied",
-			path:      "/status/phase",
+			path:      "$.status.phase",
 			operator:  OperatorNotExists,
 			expected:  nil,
 			satisfied: false,
 		},
 		{
 			name:      "matches satisfied",
-			path:      "/metadata/name",
+			path:      "$.metadata.name",
 			operator:  OperatorMatches,
 			expected:  jsonValueEval(`"test-.*"`),
 			satisfied: true,
 		},
 		{
 			name:      "matches not satisfied",
-			path:      "/metadata/name",
+			path:      "$.metadata.name",
 			operator:  OperatorMatches,
 			expected:  jsonValueEval(`"prod-.*"`),
 			satisfied: false,
 		},
 		{
-			name:      "bracket notation",
-			path:      `/metadata/labels["app.kubernetes.io/name"]`,
+			name:      "escaped dots in field name",
+			path:      "$.metadata.labels['app.kubernetes.io/name']",
 			operator:  OperatorEqual,
 			expected:  jsonValueEval(`"myapp"`),
 			satisfied: true,
 		},
 		{
 			name:      "filter expression",
-			path:      `/status/conditions[?(@.type=='Ready')]/status`,
+			path:      "$.status.conditions[?@.type=='Ready'].status",
 			operator:  OperatorEqual,
 			expected:  jsonValueEval(`"True"`),
 			satisfied: true,
 		},
 		{
 			name:      "path not found for comparison",
-			path:      "/nonexistent/path",
+			path:      "$.nonexistent.path",
 			operator:  OperatorEqual,
 			expected:  jsonValueEval(`"value"`),
 			satisfied: false,
 		},
 		{
 			name:     "invalid path",
-			path:     "no-leading-slash",
+			path:     "no-leading-dollar",
 			operator: OperatorEqual,
 			expected: jsonValueEval(`"value"`),
 			hasError: true,
 		},
 		{
 			name:     "unknown operator",
-			path:     "/status/phase",
+			path:     "$.status.phase",
 			operator: "UnknownOp",
 			expected: jsonValueEval(`"value"`),
 			hasError: true,
@@ -245,8 +244,8 @@ func TestEvaluator_EvaluateAll(t *testing.T) {
 
 	t.Run("all satisfied", func(t *testing.T) {
 		criteria := []CriterionInput{
-			{Path: "/status/phase", Operator: OperatorEqual, Expected: jsonValueEval(`"Running"`)},
-			{Path: "/status/replicas", Operator: OperatorGreaterThan, Expected: jsonValueEval(`2`)},
+			{Path: "$.status.phase", Operator: OperatorEqual, Expected: jsonValueEval(`"Running"`)},
+			{Path: "$.status.replicas", Operator: OperatorGreaterThan, Expected: jsonValueEval(`2`)},
 		}
 
 		allSatisfied, results := e.EvaluateAll(obj, criteria)
@@ -258,8 +257,8 @@ func TestEvaluator_EvaluateAll(t *testing.T) {
 
 	t.Run("one not satisfied", func(t *testing.T) {
 		criteria := []CriterionInput{
-			{Path: "/status/phase", Operator: OperatorEqual, Expected: jsonValueEval(`"Running"`)},
-			{Path: "/status/replicas", Operator: OperatorGreaterThan, Expected: jsonValueEval(`5`)},
+			{Path: "$.status.phase", Operator: OperatorEqual, Expected: jsonValueEval(`"Running"`)},
+			{Path: "$.status.replicas", Operator: OperatorGreaterThan, Expected: jsonValueEval(`5`)},
 		}
 
 		allSatisfied, results := e.EvaluateAll(obj, criteria)
@@ -276,43 +275,26 @@ func TestEvaluator_EvaluateAll(t *testing.T) {
 	})
 }
 
-func TestEvaluator_PathCaching(t *testing.T) {
-	e := NewEvaluator()
-	obj := map[string]any{"status": map[string]any{"phase": "Running"}}
-
-	// First call should populate cache
-	_ = e.Evaluate(obj, "/status/phase", OperatorEqual, jsonValueEval(`"Running"`))
-	assert.Len(t, e.pathCache, 1)
-
-	// Second call should use cache
-	_ = e.Evaluate(obj, "/status/phase", OperatorEqual, jsonValueEval(`"Running"`))
-	assert.Len(t, e.pathCache, 1) // Still 1
-
-	// Different path should add to cache
-	_ = e.Evaluate(obj, "/status/replicas", OperatorExists, nil)
-	assert.Len(t, e.pathCache, 2)
-}
-
 func TestEvaluator_ErrorCases(t *testing.T) {
 	e := NewEvaluator()
 	obj := map[string]any{"value": "test"}
 
 	t.Run("invalid regex pattern", func(t *testing.T) {
-		result := e.Evaluate(obj, "/value", OperatorMatches, jsonValueEval(`"[invalid"`))
+		result := e.Evaluate(obj, "$.value", OperatorMatches, jsonValueEval(`"[invalid"`))
 		assert.NotNil(t, result.Error)
 		assert.False(t, result.Satisfied)
 		assert.Contains(t, result.Reason, "evaluation error")
 	})
 
 	t.Run("in operator with non-array", func(t *testing.T) {
-		result := e.Evaluate(obj, "/value", OperatorIn, jsonValueEval(`"not-an-array"`))
+		result := e.Evaluate(obj, "$.value", OperatorIn, jsonValueEval(`"not-an-array"`))
 		assert.NotNil(t, result.Error)
 		assert.False(t, result.Satisfied)
 	})
 
 	t.Run("numeric comparison with non-number expected", func(t *testing.T) {
 		obj := map[string]any{"count": float64(5)}
-		result := e.Evaluate(obj, "/count", OperatorGreaterThan, jsonValueEval(`"not-a-number"`))
+		result := e.Evaluate(obj, "$.count", OperatorGreaterThan, jsonValueEval(`"not-a-number"`))
 		assert.NotNil(t, result.Error)
 		assert.False(t, result.Satisfied)
 	})
@@ -357,7 +339,7 @@ func TestEvaluator_ComplexScenarios(t *testing.T) {
 	t.Run("ready condition check", func(t *testing.T) {
 		result := e.Evaluate(
 			pod,
-			`/status/conditions[?(@.type=='Ready')]/status`,
+			"$.status.conditions[?@.type=='Ready'].status",
 			OperatorEqual,
 			jsonValueEval(`"True"`),
 		)
@@ -367,7 +349,7 @@ func TestEvaluator_ComplexScenarios(t *testing.T) {
 	t.Run("label with special characters", func(t *testing.T) {
 		result := e.Evaluate(
 			pod,
-			`/metadata/labels["app.kubernetes.io/name"]`,
+			"$.metadata.labels['app.kubernetes.io/name']",
 			OperatorEqual,
 			jsonValueEval(`"nginx"`),
 		)
@@ -377,7 +359,7 @@ func TestEvaluator_ComplexScenarios(t *testing.T) {
 	t.Run("name pattern matching", func(t *testing.T) {
 		result := e.Evaluate(
 			pod,
-			"/metadata/name",
+			"$.metadata.name",
 			OperatorMatches,
 			jsonValueEval(`"nginx-[a-z0-9]+"`),
 		)
@@ -387,7 +369,7 @@ func TestEvaluator_ComplexScenarios(t *testing.T) {
 	t.Run("namespace in allowed list", func(t *testing.T) {
 		result := e.Evaluate(
 			pod,
-			"/metadata/namespace",
+			"$.metadata.namespace",
 			OperatorIn,
 			jsonValueEval(`["production", "staging"]`),
 		)
@@ -396,10 +378,10 @@ func TestEvaluator_ComplexScenarios(t *testing.T) {
 
 	t.Run("complex multi-criteria", func(t *testing.T) {
 		criteria := []CriterionInput{
-			{Path: "/status/phase", Operator: OperatorEqual, Expected: jsonValueEval(`"Running"`)},
-			{Path: `/status/conditions[?(@.type=='Ready')]/status`, Operator: OperatorEqual, Expected: jsonValueEval(`"True"`)},
-			{Path: `/metadata/labels["app.kubernetes.io/name"]`, Operator: OperatorEqual, Expected: jsonValueEval(`"nginx"`)},
-			{Path: "/metadata/namespace", Operator: OperatorIn, Expected: jsonValueEval(`["production", "staging"]`)},
+			{Path: "$.status.phase", Operator: OperatorEqual, Expected: jsonValueEval(`"Running"`)},
+			{Path: "$.status.conditions[?@.type=='Ready'].status", Operator: OperatorEqual, Expected: jsonValueEval(`"True"`)},
+			{Path: "$.metadata.labels['app.kubernetes.io/name']", Operator: OperatorEqual, Expected: jsonValueEval(`"nginx"`)},
+			{Path: "$.metadata.namespace", Operator: OperatorIn, Expected: jsonValueEval(`["production", "staging"]`)},
 		}
 
 		allSatisfied, results := e.EvaluateAll(pod, criteria)
@@ -418,7 +400,7 @@ func BenchmarkEvaluator_SimpleField(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Evaluate(obj, "/status/phase", OperatorEqual, expected)
+		e.Evaluate(obj, "$.status.phase", OperatorEqual, expected)
 	}
 }
 
@@ -439,7 +421,7 @@ func BenchmarkEvaluator_DeepNesting(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Evaluate(obj, "/a/b/c/d/e", OperatorEqual, expected)
+		e.Evaluate(obj, "$.a.b.c.d.e", OperatorEqual, expected)
 	}
 }
 
@@ -457,20 +439,6 @@ func BenchmarkEvaluator_FilterExpression(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e.Evaluate(obj, `/conditions[?(@.type=='Ready')]/status`, OperatorEqual, expected)
-	}
-}
-
-func BenchmarkEvaluator_PathCaching(b *testing.B) {
-	e := NewEvaluator()
-	obj := map[string]any{"status": map[string]any{"phase": "Running"}}
-	expected := jsonValueEval(`"Running"`)
-
-	// Warm up cache
-	e.Evaluate(obj, "/status/phase", OperatorEqual, expected)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e.Evaluate(obj, "/status/phase", OperatorEqual, expected)
+		e.Evaluate(obj, "$.conditions[?@.type=='Ready'].status", OperatorEqual, expected)
 	}
 }

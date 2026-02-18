@@ -104,5 +104,12 @@ func validateAddon(addon *addonsv1alpha1.Addon) error {
 		selectorNames[sel.Name] = struct{}{}
 	}
 
+	// Validate initDependencies criteria
+	for i, dep := range addon.Spec.InitDependencies {
+		if err := validateCriteria(dep.Criteria, fmt.Sprintf("spec.initDependencies[%d].criteria", i)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

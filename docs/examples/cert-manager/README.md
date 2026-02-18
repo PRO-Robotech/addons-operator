@@ -104,7 +104,7 @@ spec:
   initDependencies:
     - name: cert-manager
       criteria:
-        - jsonPath: /status/conditions/0/status
+        - jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
 ```

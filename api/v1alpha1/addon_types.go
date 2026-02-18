@@ -81,11 +81,30 @@ type AddonSpec struct {
 	// +optional
 	Variables map[string]string `json:"variables,omitempty"`
 
+	// PluginName specifies an ArgoCD Config Management Plugin to use instead of
+	// the built-in Helm source. When set, values are passed via HELM_VALUES
+	// environment variable (base64-encoded) instead of source.helm.values.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	PluginName string `json:"pluginName,omitempty"`
+
+	// ReleaseName overrides the Helm release name. In Helm mode, it maps to
+	// source.helm.releaseName. In Plugin mode, it is passed as a RELEASE_NAME
+	// environment variable.
+	// +kubebuilder:validation:MaxLength=253
+	// +optional
+	ReleaseName string `json:"releaseName,omitempty"`
+
 	// InitDependencies specifies dependencies that must be ready
 	// before the Argo CD Application is created.
 	// Useful for ordered deployment (e.g., cert-manager before its consumers).
 	// +optional
 	InitDependencies []Dependency `json:"initDependencies,omitempty"`
+
+	// Finalizer controls whether Argo CD resource finalizer is set on the Application.
+	// When true, deleting the Application will also delete all resources created by it.
+	// +optional
+	Finalizer *bool `json:"finalizer,omitempty"`
 }
 
 // AddonStatus defines the observed state of an Addon.
@@ -109,6 +128,11 @@ type AddonStatus struct {
 	// +optional
 	ValuesHash string `json:"valuesHash,omitempty"`
 
+	// Deployed indicates that the Addon has been successfully deployed at least once.
+	// Once set to true, this field is never reset to false.
+	// +optional
+	Deployed bool `json:"deployed,omitempty"`
+
 	// Conditions represent the current state of the Addon.
 	// Primary conditions: Ready, Progressing, Degraded.
 	// Operational conditions: DependenciesMet, ValuesResolved, ApplicationCreated, Synced, Healthy.
@@ -124,6 +148,7 @@ type AddonStatus struct {
 // +kubebuilder:printcolumn:name="Chart",type=string,JSONPath=`.spec.chart`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Deployed",type=boolean,JSONPath=`.status.deployed`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Addon is the primary resource for managing Helm-based deployments.

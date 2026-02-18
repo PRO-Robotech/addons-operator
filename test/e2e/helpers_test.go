@@ -157,9 +157,9 @@ func createTestAddonValue(name, addonName string, values map[string]interface{},
 		Spec: addonsv1alpha1.AddonValueSpec{},
 	}
 
-	// Set values if provided
+	// Set values if provided — marshal map to YAML string
 	if values != nil {
-		av.Spec.Values.Raw = mustMarshal(values)
+		av.Spec.Values = string(mustMarshalYAML(values))
 	}
 
 	Expect(k8sClient.Create(ctx, av)).To(Succeed(), "Failed to create AddonValue %s", name)
@@ -632,6 +632,12 @@ func (b *CriterionBuilder) WithOperator(op addonsv1alpha1.CriterionOperator) *Cr
 // WithValue sets the value for comparison.
 func (b *CriterionBuilder) WithValue(v interface{}) *CriterionBuilder {
 	b.criterion.Value = jsonValue(v)
+	return b
+}
+
+// WithKeep sets the keep (rule latching) flag for the criterion.
+func (b *CriterionBuilder) WithKeep(keep bool) *CriterionBuilder {
+	b.criterion.Keep = &keep
 	return b
 }
 

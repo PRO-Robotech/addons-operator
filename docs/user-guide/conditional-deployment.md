@@ -25,7 +25,7 @@ spec:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: cert-manager
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
       selector:
@@ -75,7 +75,7 @@ criteria:
       apiVersion: addons.in-cloud.io/v1alpha1
       kind: Addon
       name: cert-manager
-    jsonPath: /status/conditions/0/status
+    jsonPath: $.status.conditions[0].status
     operator: Equal
     value: "True"
 ```
@@ -89,7 +89,7 @@ criteria:
       kind: Secret
       name: tls-certificate
       namespace: default
-    jsonPath: /data/tls.crt
+    jsonPath: $.data['tls.crt']
     operator: Exists
 ```
 
@@ -103,14 +103,14 @@ criteria:
       apiVersion: addons.in-cloud.io/v1alpha1
       kind: Addon
       name: cert-manager
-    jsonPath: /status/conditions/0/status
+    jsonPath: $.status.conditions[0].status
     operator: Equal
     value: "True"
   - source:
       apiVersion: addons.in-cloud.io/v1alpha1
       kind: Addon
       name: external-dns
-    jsonPath: /status/conditions/0/status
+    jsonPath: $.status.conditions[0].status
     operator: Equal
     value: "True"
 ```
@@ -133,6 +133,36 @@ criteria:
 
 Подробнее см. [Справочник операторов Criteria](../reference/criteria-operators.md).
 
+## Latching (фиксация criteria)
+
+По умолчанию, каждый criterion фиксируется при первом совпадении правила (поле `keep`, по умолчанию `true`). Зафиксированный criterion больше не перевычисляется — это означает, что если cert-manager временно станет недоступным, TLS values не будут удалены.
+
+Criteria с `keep: false` продолжают перевычисляться каждый цикл. Можно комбинировать оба варианта в одном правиле:
+
+```yaml
+criteria:
+  # Фиксируется — cert-manager может временно упасть
+  - source:
+      apiVersion: addons.in-cloud.io/v1alpha1
+      kind: Addon
+      name: cert-manager
+    jsonPath: $.status.conditions[?@.type=='Ready'].status
+    operator: Equal
+    value: "True"
+    # keep: true (по умолчанию)
+
+  # Перевычисляется — правило деактивируется при масштабировании вниз
+  - source:
+      apiVersion: apps/v1
+      kind: Deployment
+      name: my-app
+      namespace: default
+    jsonPath: $.spec.replicas
+    operator: GreaterOrEqual
+    value: 3
+    keep: false
+```
+
 ## Примеры
 
 ### Включение фичи при готовности зависимости
@@ -150,7 +180,7 @@ spec:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: istio
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
       selector:
@@ -177,7 +207,7 @@ spec:
             kind: ConfigMap
             name: cluster-info
             namespace: kube-system
-          jsonPath: /data/environment
+          jsonPath: $.data.environment
           operator: Equal
           value: "production"
       selector:
@@ -203,7 +233,7 @@ spec:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: cilium
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
       selector:
@@ -219,14 +249,14 @@ spec:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: cert-manager
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
         - source:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: external-secrets
-          jsonPath: /status/conditions/0/status
+          jsonPath: $.status.conditions[0].status
           operator: Equal
           value: "True"
       selector:
@@ -268,5 +298,6 @@ kubectl get addon cert-manager -o jsonpath='{.status.conditions[0]}'
 
 ## Следующие шаги
 
+- [Фиксация правил (Latching)](rule-latching.md) — защита от каскадных сбоев при обновлении зависимостей
 - [Зависимости](dependencies.md) — блокировка развёртывания до готовности зависимостей
 - [Справочник операторов Criteria](../reference/criteria-operators.md) — все доступные операторы

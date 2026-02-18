@@ -13,7 +13,7 @@ spec:
             apiVersion: addons.in-cloud.io/v1alpha1
             kind: Addon
             name: cert-manager
-          jsonPath: "/status/conditions/0/status"
+          jsonPath: "$.status.conditions[?@.type=='Ready'].status"
           operator: Equal
           value: "True"
       selector:
@@ -23,7 +23,7 @@ spec:
           addons.in-cloud.io/addon: cilium
           addons.in-cloud.io/feature.certificates: "true"
 
-    # Enable Hubble when explicitly configured
+    # Enable Hubble when explicitly configured (re-evaluates every cycle)
     - name: enable-hubble
       criteria:
         - source:
@@ -31,9 +31,10 @@ spec:
             kind: ConfigMap
             name: cluster-config
             namespace: kube-system
-          jsonPath: "/data/enable_hubble"
+          jsonPath: "$.data.enable_hubble"
           operator: Equal
           value: "true"
+          keep: false  # Re-evaluate every cycle (disables when ConfigMap changes)
       selector:
         name: hubble
         priority: 30

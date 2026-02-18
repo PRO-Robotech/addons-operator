@@ -48,6 +48,7 @@ import (
 
 const (
 	requeueIntervalDegraded  = 60 * time.Second
+	requeueIntervalStabilize = 1 * time.Second
 	finalizerName            = "addons.in-cloud.io/finalizer"
 	addonLabelKey            = "addons.in-cloud.io/addon"
 	valuesSourcesIndexKey    = "spec.valuesSources.sourceRef"
@@ -62,6 +63,10 @@ type AddonReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+
+	// Template engine for rendering Go templates in AddonValue strings.
+	// Stored in the reconciler to reuse the LRU template cache across reconciles.
+	templateEngine sources.TemplateEngine
 
 	// Dynamic watch components for SourceRef watches
 	watchManager dynamicwatch.WatchManager
@@ -117,8 +122,6 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.updateStatus(ctx, addon, cm)
 	}
 
-	cm.SetProgressing(conditions.ReasonInitializing, conditions.ReasonReconciling, "Reconciliation in progress")
-
 	dependenciesMet, err := r.checkDependencies(ctx, addon)
 	if err != nil {
 		logger.Error(nil, "Failed to check dependencies", "addon", addon.Name, "reason", err.Error())
@@ -142,25 +145,38 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.updateStatus(ctx, addon, cm)
 	}
 
-	aggregatedValues, err := r.aggregateValues(ctx, addon)
+	tmplCtx := sources.TemplateContext{
+		Variables: addon.Spec.Variables,
+		Values:    extractedValues,
+	}
+
+	finalValues, err := r.aggregateValues(ctx, addon, tmplCtx)
 	if err != nil {
 		logger.Error(nil, "Failed to aggregate values", "addon", addon.Name, "reason", err.Error())
-		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonValueSourceError, err.Error())
-		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonValueSourceError, "Failed to aggregate AddonValues")
+		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonTemplateError, err.Error())
+		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonTemplateError, "Failed to aggregate and render AddonValues")
 		return r.updateStatus(ctx, addon, cm)
 	}
 
-	finalValues, err := r.applyTemplates(aggregatedValues, addon, extractedValues)
-	if err != nil {
-		logger.Error(nil, "Failed to apply templates", "addon", addon.Name, "reason", err.Error())
-		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonTemplateError, err.Error())
-		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonTemplateError, "Failed to render value templates")
-		return r.updateStatus(ctx, addon, cm)
-	}
+	previousHash := addon.Status.ValuesHash
 
 	// Compute hash from final values (includes both aggregated values and extracted values after templates)
 	r.computeValuesHash(ctx, addon, finalValues)
 	cm.SetOperationalCondition(conditions.TypeValuesResolved, true, "ValuesResolved", "All values successfully resolved")
+
+	exists, checkErr := r.applicationExists(ctx, addon)
+	if checkErr != nil {
+		return ctrl.Result{}, checkErr
+	}
+
+	if !exists && (previousHash == "" || previousHash != addon.Status.ValuesHash) {
+		logger.Info("Deferring Application creation until values stabilize",
+			"previousHash", previousHash, "newHash", addon.Status.ValuesHash)
+		cm.SetProgressing(conditions.ReasonWaitingForStableValues,
+			conditions.ReasonWaitingForStableValues,
+			"Waiting for values to stabilize before creating Application")
+		return r.updateStatusAndRequeue(ctx, addon, cm, requeueIntervalStabilize)
+	}
 
 	if err := r.reconcileApplication(ctx, addon, finalValues); err != nil {
 		logger.Error(nil, "Failed to reconcile Application", "addon", addon.Name, "reason", err.Error())
@@ -176,6 +192,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if cm.IsConditionTrue(conditions.TypeSynced) && cm.IsConditionTrue(conditions.TypeHealthy) {
 		cm.SetReady(conditions.ReasonFullyReconciled, "Addon is fully reconciled and healthy")
+		addon.Status.Deployed = true
 	} else if !cm.IsDegraded() {
 		reason := conditions.ReasonWaitingForSync
 		message := "Waiting for Application to sync"
@@ -254,9 +271,9 @@ func (r *AddonReconciler) checkDependencies(ctx context.Context, addon *addonsv1
 	return result.Satisfied, nil
 }
 
-func (r *AddonReconciler) aggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon) (map[string]any, error) {
-	aggregator := values.NewAggregator(r.Client)
-	return aggregator.AggregateValues(ctx, addon)
+func (r *AddonReconciler) aggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon, tmplCtx sources.TemplateContext) (map[string]any, error) {
+	aggregator := values.NewAggregator(r.Client, r.templateEngine)
+	return aggregator.AggregateValues(ctx, addon, tmplCtx)
 }
 
 // computeValuesHash computes and sets the hash of the final values.
@@ -271,6 +288,19 @@ func (r *AddonReconciler) computeValuesHash(ctx context.Context, addon *addonsv1
 		hash = ""
 	}
 	addon.Status.ValuesHash = hash
+}
+
+// applicationExists checks if the Argo CD Application for this Addon already exists.
+func (r *AddonReconciler) applicationExists(ctx context.Context, addon *addonsv1alpha1.Addon) (bool, error) {
+	app := &argocdv1alpha1.Application{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      addon.Name,
+		Namespace: addon.Spec.Backend.Namespace,
+	}, app)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addonsv1alpha1.Addon, helmValues map[string]any) error {
@@ -387,9 +417,30 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 	return ctrl.Result{}, nil
 }
 
+// updateStatusAndRequeue updates status and returns a requeue result with the specified interval.
+// This is used when the controller needs to wait before proceeding (e.g., stabilization gate).
+func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, _ *conditions.Manager, interval time.Duration) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	addon.Status.ObservedGeneration = addon.Generation
+
+	if err := r.Status().Update(ctx, addon); err != nil {
+		if apierrors.IsConflict(err) {
+			logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
+			return ctrl.Result{Requeue: true}, nil
+		}
+		logger.Error(err, "Failed to update Addon status")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: interval}, nil
+}
+
 func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
+
+	r.templateEngine = sources.NewTemplateEngine()
 
 	// Initialize dynamic watch components
 	r.resolver = dynamicwatch.NewResolver()
@@ -572,16 +623,6 @@ func (r *AddonReconciler) extractValuesSources(ctx context.Context, addon *addon
 
 	extractor := sources.NewExtractor(r.Client)
 	return extractor.Extract(ctx, addon.Spec.ValuesSources)
-}
-
-func (r *AddonReconciler) applyTemplates(aggregatedValues map[string]any, addon *addonsv1alpha1.Addon, extractedValues map[string]any) (map[string]any, error) {
-	ctx := sources.TemplateContext{
-		Variables: addon.Spec.Variables,
-		Values:    extractedValues,
-	}
-
-	engine := sources.NewTemplateEngine()
-	return engine.Apply(aggregatedValues, ctx)
 }
 
 // updateDynamicWatches updates watches based on the current valuesSources.

@@ -17,6 +17,7 @@ limitations under the License.
 package argocd
 
 import (
+	"encoding/base64"
 	"testing"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
@@ -24,6 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
 )
@@ -1058,5 +1061,553 @@ func TestApplicationBuilder_NeedsUpdate_PathChanged(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, needsUpdate, "should not need update when path matches")
 		assert.Empty(t, reason)
+	})
+}
+
+func TestApplicationBuilder_Build_WithPluginName(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			PluginName:      "helm-secrets",
+		},
+	}
+
+	values := map[string]any{"key": "value"}
+
+	app, err := builder.Build(addon, "argocd", values)
+	require.NoError(t, err)
+
+	assert.Nil(t, app.Spec.Source.Helm, "helm should be nil in plugin mode")
+	require.NotNil(t, app.Spec.Source.Plugin, "plugin should be set")
+	assert.Equal(t, "helm-secrets", app.Spec.Source.Plugin.Name)
+
+	valuesYAML, err := yaml.Marshal(values)
+	require.NoError(t, err)
+	expectedB64 := base64.StdEncoding.EncodeToString(valuesYAML)
+
+	require.Len(t, app.Spec.Source.Plugin.Env, 1)
+	assert.Equal(t, "HELM_VALUES", app.Spec.Source.Plugin.Env[0].Name)
+	assert.Equal(t, expectedB64, app.Spec.Source.Plugin.Env[0].Value)
+}
+
+func TestApplicationBuilder_Build_WithPluginNameAndReleaseName(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			PluginName:      "helm-secrets",
+			ReleaseName:     "my-release",
+		},
+	}
+
+	values := map[string]any{"key": "value"}
+
+	app, err := builder.Build(addon, "argocd", values)
+	require.NoError(t, err)
+
+	assert.Nil(t, app.Spec.Source.Helm)
+	require.NotNil(t, app.Spec.Source.Plugin)
+	assert.Equal(t, "helm-secrets", app.Spec.Source.Plugin.Name)
+
+	require.Len(t, app.Spec.Source.Plugin.Env, 2)
+	assert.Equal(t, "HELM_VALUES", app.Spec.Source.Plugin.Env[0].Name)
+	assert.Equal(t, "RELEASE_NAME", app.Spec.Source.Plugin.Env[1].Name)
+	assert.Equal(t, "my-release", app.Spec.Source.Plugin.Env[1].Value)
+}
+
+func TestApplicationBuilder_Build_WithReleaseNameOnly(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+			ReleaseName:     "custom-release",
+		},
+	}
+
+	values := map[string]any{"key": "value"}
+
+	app, err := builder.Build(addon, "argocd", values)
+	require.NoError(t, err)
+
+	assert.Nil(t, app.Spec.Source.Plugin, "plugin should be nil in helm mode")
+	require.NotNil(t, app.Spec.Source.Helm)
+	assert.Equal(t, "custom-release", app.Spec.Source.Helm.ReleaseName)
+	assert.Contains(t, app.Spec.Source.Helm.Values, "key: value")
+}
+
+func TestApplicationBuilder_Build_WithoutNewFields_Regression(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-addon",
+			UID:  types.UID("test-uid"),
+		},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://example.com/charts",
+			Version:         "1.0.0",
+			TargetNamespace: "test-ns",
+			TargetCluster:   "in-cluster",
+		},
+	}
+
+	values := map[string]any{"key": "value"}
+
+	app, err := builder.Build(addon, "argocd", values)
+	require.NoError(t, err)
+
+	assert.Nil(t, app.Spec.Source.Plugin, "plugin should be nil when pluginName not set")
+	require.NotNil(t, app.Spec.Source.Helm)
+	assert.Equal(t, "", app.Spec.Source.Helm.ReleaseName)
+	assert.Contains(t, app.Spec.Source.Helm.Values, "key: value")
+}
+
+func TestApplicationBuilder_NeedsUpdate_PluginChanges(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	values := map[string]any{"key": "value"}
+
+	t.Run("needs update when plugin env changes", func(t *testing.T) {
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+				PluginName:      "helm-secrets",
+			},
+		}
+
+		desired, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: desired.Spec,
+		}
+		// Modify the existing env value to simulate a change
+		existing.Spec.Source.Plugin.Env[0].Value = "b2xkLXZhbHVl"
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when plugin env changes")
+		assert.Contains(t, reason, "plugin differs")
+	})
+
+	t.Run("needs update when plugin name changes", func(t *testing.T) {
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+				PluginName:      "new-plugin",
+			},
+		}
+
+		oldAddon := addon.DeepCopy()
+		oldAddon.Spec.PluginName = "old-plugin"
+
+		existing, err := builder.Build(oldAddon, "argocd", values)
+		require.NoError(t, err)
+		existing.Labels = map[string]string{
+			"app.kubernetes.io/managed-by": "addon-operator",
+			"addons.in-cloud.io/addon":     "test-addon",
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when plugin name changes")
+		assert.Contains(t, reason, "plugin differs")
+	})
+
+	t.Run("needs update when switching helm to plugin", func(t *testing.T) {
+		helmAddon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+
+		pluginAddon := helmAddon.DeepCopy()
+		pluginAddon.Spec.PluginName = "helm-secrets"
+
+		existing, err := builder.Build(helmAddon, "argocd", values)
+		require.NoError(t, err)
+		existing.Labels = map[string]string{
+			"app.kubernetes.io/managed-by": "addon-operator",
+			"addons.in-cloud.io/addon":     "test-addon",
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, pluginAddon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when switching from helm to plugin")
+		assert.Contains(t, reason, "existing helm is not nil, desired is nil")
+	})
+
+	t.Run("needs update when switching plugin to helm", func(t *testing.T) {
+		pluginAddon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+				PluginName:      "helm-secrets",
+			},
+		}
+
+		helmAddon := pluginAddon.DeepCopy()
+		helmAddon.Spec.PluginName = ""
+
+		existing, err := builder.Build(pluginAddon, "argocd", values)
+		require.NoError(t, err)
+		existing.Labels = map[string]string{
+			"app.kubernetes.io/managed-by": "addon-operator",
+			"addons.in-cloud.io/addon":     "test-addon",
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, helmAddon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when switching from plugin to helm")
+		assert.Contains(t, reason, "existing helm is nil, desired is not")
+	})
+
+	t.Run("no update needed when plugin matches", func(t *testing.T) {
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+				PluginName:      "helm-secrets",
+			},
+		}
+
+		desired, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "addon-operator",
+					"addons.in-cloud.io/addon":     "test-addon",
+				},
+			},
+			Spec: desired.Spec,
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate, "should not need update when plugin matches")
+		assert.Empty(t, reason)
+	})
+}
+
+func TestApplicationBuilder_NeedsUpdate_ReleaseNameChanges(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	values := map[string]any{"key": "value"}
+
+	t.Run("needs update when releaseName added in helm mode", func(t *testing.T) {
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+				ReleaseName:     "my-release",
+			},
+		}
+
+		oldAddon := addon.DeepCopy()
+		oldAddon.Spec.ReleaseName = ""
+
+		existing, err := builder.Build(oldAddon, "argocd", values)
+		require.NoError(t, err)
+		existing.Labels = map[string]string{
+			"app.kubernetes.io/managed-by": "addon-operator",
+			"addons.in-cloud.io/addon":     "test-addon",
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when releaseName added")
+		assert.Contains(t, reason, "helm releaseName differs")
+	})
+
+	t.Run("needs update when releaseName changed in helm mode", func(t *testing.T) {
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+				ReleaseName:     "new-release",
+			},
+		}
+
+		oldAddon := addon.DeepCopy()
+		oldAddon.Spec.ReleaseName = "old-release"
+
+		existing, err := builder.Build(oldAddon, "argocd", values)
+		require.NoError(t, err)
+		existing.Labels = map[string]string{
+			"app.kubernetes.io/managed-by": "addon-operator",
+			"addons.in-cloud.io/addon":     "test-addon",
+		}
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate, "should need update when releaseName changed")
+		assert.Contains(t, reason, "helm releaseName differs")
+	})
+}
+
+func TestApplicationBuilder_Build_WithFinalizer(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	baseAddon := func() *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+	}
+
+	t.Run("finalizer enabled", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		app, err := builder.Build(addon, "argocd", nil)
+		require.NoError(t, err)
+		assert.Contains(t, app.Finalizers, "resources-finalizer.argocd.argoproj.io")
+	})
+
+	t.Run("finalizer disabled", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(false)
+
+		app, err := builder.Build(addon, "argocd", nil)
+		require.NoError(t, err)
+		assert.Empty(t, app.Finalizers)
+	})
+
+	t.Run("finalizer nil", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = nil
+
+		app, err := builder.Build(addon, "argocd", nil)
+		require.NoError(t, err)
+		assert.Empty(t, app.Finalizers)
+	})
+}
+
+func TestApplicationBuilder_NeedsUpdate_Finalizer(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	baseAddon := func() *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+	}
+	values := map[string]any{}
+
+	t.Run("detects finalizer added", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		existing, err := builder.Build(baseAddon(), "argocd", values)
+		require.NoError(t, err)
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate)
+		assert.Contains(t, reason, "argocd resource finalizer differs")
+	})
+
+	t.Run("detects finalizer removed", func(t *testing.T) {
+		addonWithFinalizer := baseAddon()
+		addonWithFinalizer.Spec.Finalizer = ptr.To(true)
+
+		existing, err := builder.Build(addonWithFinalizer, "argocd", values)
+		require.NoError(t, err)
+
+		addonWithout := baseAddon()
+		addonWithout.Spec.Finalizer = ptr.To(false)
+
+		needsUpdate, reason, err := builder.NeedsUpdate(existing, addonWithout, "argocd", values)
+		require.NoError(t, err)
+		assert.True(t, needsUpdate)
+		assert.Contains(t, reason, "argocd resource finalizer differs")
+	})
+
+	t.Run("no update when both have finalizer", func(t *testing.T) {
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		existing, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		needsUpdate, _, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate)
+	})
+
+	t.Run("no update when both lack finalizer", func(t *testing.T) {
+		addon := baseAddon()
+
+		existing, err := builder.Build(addon, "argocd", values)
+		require.NoError(t, err)
+
+		needsUpdate, _, err := builder.NeedsUpdate(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.False(t, needsUpdate)
+	})
+}
+
+func TestApplicationBuilder_UpdateSpec_Finalizer(t *testing.T) {
+	builder := NewApplicationBuilder()
+
+	baseAddon := func() *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-addon",
+				UID:  types.UID("test-uid"),
+			},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart:           "test-chart",
+				RepoURL:         "https://example.com/charts",
+				Version:         "1.0.0",
+				TargetNamespace: "test-ns",
+				TargetCluster:   "in-cluster",
+			},
+		}
+	}
+	values := map[string]any{}
+
+	t.Run("adds finalizer", func(t *testing.T) {
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-addon",
+				Namespace: "argocd",
+			},
+		}
+
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(true)
+
+		err := builder.UpdateSpec(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.Contains(t, existing.Finalizers, "resources-finalizer.argocd.argoproj.io")
+	})
+
+	t.Run("removes finalizer", func(t *testing.T) {
+		existing := &argocdv1alpha1.Application{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:       "test-addon",
+				Namespace:  "argocd",
+				Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+			},
+		}
+
+		addon := baseAddon()
+		addon.Spec.Finalizer = ptr.To(false)
+
+		err := builder.UpdateSpec(existing, addon, "argocd", values)
+		require.NoError(t, err)
+		assert.NotContains(t, existing.Finalizers, "resources-finalizer.argocd.argoproj.io")
 	})
 }

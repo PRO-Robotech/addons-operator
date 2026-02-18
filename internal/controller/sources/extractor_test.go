@@ -468,6 +468,7 @@ func TestSetNestedField(t *testing.T) {
 		path     string
 		value    any
 		expected map[string]any
+		wantErr  bool
 	}{
 		{
 			name:     "simple field",
@@ -502,21 +503,30 @@ func TestSetNestedField(t *testing.T) {
 			},
 		},
 		{
-			name:    "override non-map value",
+			name:    "error on non-map intermediate value",
 			initial: map[string]any{"a": "string"},
 			path:    "a.b",
 			value:   "value",
-			expected: map[string]any{
-				"a": map[string]any{
-					"b": "value",
-				},
-			},
+			wantErr: true,
+		},
+		{
+			name:    "error on non-map deep intermediate value",
+			initial: map[string]any{"a": map[string]any{"b": 42}},
+			path:    "a.b.c",
+			value:   "value",
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setNestedField(tt.initial, tt.path, tt.value)
+			err := setNestedField(tt.initial, tt.path, tt.value)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "not a map")
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, tt.initial)
 		})
 	}

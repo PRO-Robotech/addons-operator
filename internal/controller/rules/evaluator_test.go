@@ -95,7 +95,7 @@ func TestRuleEvaluator_CriteriaOnTargetAddon(t *testing.T) {
 					Name: "when-ready",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -147,7 +147,7 @@ func TestRuleEvaluator_CriteriaNotMet(t *testing.T) {
 					Name: "when-ready",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -220,7 +220,7 @@ func TestRuleEvaluator_ExternalSource(t *testing.T) {
 								Kind:       "Addon",
 								Name:       "cert-manager",
 							},
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -273,7 +273,7 @@ func TestRuleEvaluator_ExternalSourceNotFound(t *testing.T) {
 								Kind:       "Addon",
 								Name:       "non-existent",
 							},
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -322,12 +322,12 @@ func TestRuleEvaluator_MultipleCriteria(t *testing.T) {
 					Name: "multi-criteria",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
 						{
-							JSONPath: "/metadata/name",
+							JSONPath: "$.metadata.name",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`"test-phase"`)},
 						},
@@ -387,7 +387,7 @@ func TestRuleEvaluator_MultipleRules(t *testing.T) {
 					Name: "when-ready",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
 						},
@@ -402,7 +402,7 @@ func TestRuleEvaluator_MultipleRules(t *testing.T) {
 					Name: "when-failed",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorEqual,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`999`)},
 						},
@@ -463,7 +463,7 @@ func TestRuleEvaluator_ExistsOperator(t *testing.T) {
 					Name: "when-has-phase",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorExists,
 						},
 					},
@@ -513,7 +513,7 @@ func TestRuleEvaluator_NotExistsOperator(t *testing.T) {
 					Name: "when-no-error",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/error",
+							JSONPath: "$.status.error",
 							Operator: addonsv1alpha1.OperatorNotExists,
 						},
 					},
@@ -564,7 +564,7 @@ func TestRuleEvaluator_InOperator(t *testing.T) {
 					Name: "when-phase-in-list",
 					Criteria: []addonsv1alpha1.Criterion{
 						{
-							JSONPath: "/status/observedGeneration",
+							JSONPath: "$.status.observedGeneration",
 							Operator: addonsv1alpha1.OperatorIn,
 							Value:    &apiextensionsv1.JSON{Raw: []byte(`[1, 2, 3]`)},
 						},
@@ -593,6 +593,357 @@ func TestRuleEvaluator_InOperator(t *testing.T) {
 	assert.Len(t, ruleStatuses, 1)
 	assert.True(t, ruleStatuses[0].Matched)
 	assert.Len(t, activeSelectors, 1)
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestRuleEvaluator_LatchOnFirstMatch_DefaultKeep(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "latch-rule",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							// Keep is nil (default = true)
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "latched",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "latched"},
+					},
+				},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 1},
+	}
+
+	ruleStatuses, activeSelectors, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.Len(t, ruleStatuses, 1)
+	assert.True(t, ruleStatuses[0].Matched)
+	assert.True(t, ruleStatuses[0].Latched, "Rule should be latched on first match with default keep")
+	assert.Len(t, activeSelectors, 1)
+}
+
+func TestRuleEvaluator_LatchExplicitKeepTrue(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "explicit-keep",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							Keep:     boolPtr(true),
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "kept",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "kept"},
+					},
+				},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 1},
+	}
+
+	ruleStatuses, _, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.True(t, ruleStatuses[0].Latched)
+}
+
+func TestRuleEvaluator_NoLatchWhenKeepFalse(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "no-latch",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							Keep:     boolPtr(false),
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "volatile",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "volatile"},
+					},
+				},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 1},
+	}
+
+	ruleStatuses, activeSelectors, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.True(t, ruleStatuses[0].Matched)
+	assert.False(t, ruleStatuses[0].Latched, "Rule should NOT latch when keep=false")
+	assert.Len(t, activeSelectors, 1)
+}
+
+func TestRuleEvaluator_LatchMixedKeep(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "mixed-keep",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							// keep=nil (true) — will latch
+						},
+						{
+							JSONPath: "$.metadata.name",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`"test-phase"`)},
+							Keep:     boolPtr(false), // re-evaluated every cycle
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "mixed",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "mixed"},
+					},
+				},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 1},
+	}
+
+	ruleStatuses, _, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.True(t, ruleStatuses[0].Matched)
+	assert.True(t, ruleStatuses[0].Latched, "Rule SHOULD latch — has keepable criteria")
+}
+
+func TestRuleEvaluator_MixedKeep_KeepFalseFailsAfterLatch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	// Previously latched rule with mixed keep criteria
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "mixed-latched",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							// keep=nil (true) — latched, won't be re-evaluated
+						},
+						{
+							JSONPath: "$.metadata.name",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`"wrong-name"`)},
+							Keep:     boolPtr(false), // re-evaluated — will fail
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "mixed",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "mixed"},
+					},
+				},
+			},
+		},
+		Status: addonsv1alpha1.AddonPhaseStatus{
+			RuleStatuses: []addonsv1alpha1.RuleStatus{
+				{Name: "mixed-latched", Matched: true, Latched: true},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 999},
+	}
+
+	ruleStatuses, activeSelectors, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.False(t, ruleStatuses[0].Matched, "Rule should NOT match — keep=false criterion fails")
+	assert.False(t, ruleStatuses[0].Latched, "Rule should lose latched status when not matched")
+	assert.Empty(t, activeSelectors)
+}
+
+func TestRuleEvaluator_LatchedRuleSurvivesFailedCriteria(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	// Phase with pre-existing latched status (simulating a previous reconcile)
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "latched-rule",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "persistent",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "persistent"},
+					},
+				},
+			},
+		},
+		Status: addonsv1alpha1.AddonPhaseStatus{
+			RuleStatuses: []addonsv1alpha1.RuleStatus{
+				{
+					Name:    "latched-rule",
+					Matched: true,
+					Latched: true,
+					Message: "Latched (keep)",
+				},
+			},
+		},
+	}
+
+	// Addon where criteria would NOW fail (generation changed)
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 999},
+	}
+
+	ruleStatuses, activeSelectors, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.Len(t, ruleStatuses, 1)
+	assert.True(t, ruleStatuses[0].Matched, "Latched rule should stay matched")
+	assert.True(t, ruleStatuses[0].Latched, "Latched status should persist")
+	assert.Equal(t, "All conditions satisfied", ruleStatuses[0].Message)
+	assert.Len(t, activeSelectors, 1, "Latched rule should still contribute selector")
+}
+
+func TestHasKeepableCriteria(t *testing.T) {
+	tests := []struct {
+		name     string
+		rule     addonsv1alpha1.PhaseRule
+		expected bool
+	}{
+		{
+			name:     "no criteria = keepable",
+			rule:     addonsv1alpha1.PhaseRule{Name: "empty"},
+			expected: true,
+		},
+		{
+			name: "all nil keep = has keepable",
+			rule: addonsv1alpha1.PhaseRule{
+				Name: "all-nil",
+				Criteria: []addonsv1alpha1.Criterion{
+					{JSONPath: "$.a", Operator: addonsv1alpha1.OperatorExists},
+					{JSONPath: "$.b", Operator: addonsv1alpha1.OperatorExists},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "all true = has keepable",
+			rule: addonsv1alpha1.PhaseRule{
+				Name: "all-true",
+				Criteria: []addonsv1alpha1.Criterion{
+					{JSONPath: "$.a", Operator: addonsv1alpha1.OperatorExists, Keep: boolPtr(true)},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "mixed = has keepable (one nil + one false)",
+			rule: addonsv1alpha1.PhaseRule{
+				Name: "mixed",
+				Criteria: []addonsv1alpha1.Criterion{
+					{JSONPath: "$.a", Operator: addonsv1alpha1.OperatorExists},
+					{JSONPath: "$.b", Operator: addonsv1alpha1.OperatorExists, Keep: boolPtr(false)},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "all false = no keepable criteria",
+			rule: addonsv1alpha1.PhaseRule{
+				Name: "all-false",
+				Criteria: []addonsv1alpha1.Criterion{
+					{JSONPath: "$.a", Operator: addonsv1alpha1.OperatorExists, Keep: boolPtr(false)},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, hasKeepableCriteria(tt.rule))
+		})
+	}
 }
 
 func TestCompareValues(t *testing.T) {

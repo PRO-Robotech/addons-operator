@@ -87,7 +87,7 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 			// Build criterion: dep-addon Ready condition status == "True"
 			criterion := NewCriterion().
 				WithSource("addons.in-cloud.io/v1alpha1", "Addon", depName, "").
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()
@@ -184,14 +184,14 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 			By("Creating AddonPhase with two independent rules")
 			criterion1 := NewCriterion().
 				WithSource("addons.in-cloud.io/v1alpha1", "Addon", depName1, "").
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()
 
 			criterion2 := NewCriterion().
 				WithSource("addons.in-cloud.io/v1alpha1", "Addon", depName2, "").
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()
@@ -268,7 +268,7 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 			// Check if Secret exists (data field exists)
 			criterion := NewCriterion().
 				WithSource("v1", "Secret", secretName, testNamespace).
-				WithJSONPath("/data").
+				WithJSONPath("$.data").
 				WithOperator(addonsv1alpha1.OperatorExists).
 				Build()
 
@@ -319,7 +319,7 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 			// Check that Addon Ready condition status is NOT "False" (i.e., not failed)
 			criterion := NewCriterion().
 				WithSource("addons.in-cloud.io/v1alpha1", "Addon", targetName, "").
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorNotEqual).
 				WithValue("False").
 				Build()
@@ -444,9 +444,10 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 			By("Creating AddonPhase with dependency on dep-addon")
 			criterion := NewCriterion().
 				WithSource("addons.in-cloud.io/v1alpha1", "Addon", depName, "").
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
+				WithKeep(false).
 				Build()
 
 			targetPhase = createTestAddonPhase(targetName,
@@ -518,8 +519,9 @@ var _ = Describe("AddonPhase Activation", Ordered, func() {
 			By("Creating AddonPhase with Exists criterion on Secret")
 			criterion := NewCriterion().
 				WithSource("v1", "Secret", secretName, testNamespace).
-				WithJSONPath("/data").
+				WithJSONPath("$.data").
 				WithOperator(addonsv1alpha1.OperatorExists).
+				WithKeep(false).
 				Build()
 
 			targetPhase = createTestAddonPhase(targetName,
@@ -628,7 +630,7 @@ var _ = Describe("AddonPhase Values Integration", Ordered, func() {
 			By("Creating AddonPhase to activate phase values when dep is Ready")
 			criterion := NewCriterion().
 				WithSource("addons.in-cloud.io/v1alpha1", "Addon", depName, "").
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()

@@ -148,7 +148,7 @@ func TestReleaseWatch_DecrementCount(t *testing.T) {
 	assert.True(t, entry.active, "should still be active with refCount > 0")
 }
 
-func TestReleaseWatch_MarkInactiveAtZero(t *testing.T) {
+func TestReleaseWatch_RemoveAtZero(t *testing.T) {
 	tm := newTestableManager()
 
 	gvk := schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}
@@ -157,9 +157,8 @@ func TestReleaseWatch_MarkInactiveAtZero(t *testing.T) {
 	tm.ReleaseWatch(gvk)
 
 	entry := tm.getEntry(gvk)
-	require.NotNil(t, entry)
-	assert.Equal(t, 0, entry.refCount)
-	assert.False(t, entry.active, "should be marked inactive at refCount=0")
+	assert.Nil(t, entry, "entry should be removed from map at refCount=0")
+	assert.Equal(t, 0, tm.GetWatchCount())
 }
 
 func TestReleaseWatch_UnknownGVK(t *testing.T) {
@@ -311,20 +310,19 @@ func TestReleaseWatch_MultipleReleases(t *testing.T) {
 	// First release
 	tm.ReleaseWatch(gvk)
 	entry := tm.getEntry(gvk)
+	require.NotNil(t, entry)
 	assert.Equal(t, 1, entry.refCount)
 	assert.True(t, entry.active)
 
-	// Second release
+	// Second release — entry should be removed
 	tm.ReleaseWatch(gvk)
 	entry = tm.getEntry(gvk)
-	assert.Equal(t, 0, entry.refCount)
-	assert.False(t, entry.active)
+	assert.Nil(t, entry, "entry should be removed at refCount=0")
 
-	// Third release (below zero)
+	// Third release on now-unknown GVK — should not panic
 	tm.ReleaseWatch(gvk)
 	entry = tm.getEntry(gvk)
-	assert.Equal(t, -1, entry.refCount)
-	assert.False(t, entry.active)
+	assert.Nil(t, entry)
 }
 
 func BenchmarkEnsureWatch_CacheHit(b *testing.B) {

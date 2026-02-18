@@ -24,6 +24,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
+const (
+	// AddonKind is the Kind string for Addon resources.
+	AddonKind = "Addon"
+)
+
 var (
 	// GroupVersion is group version used to register these objects.
 	GroupVersion = schema.GroupVersion{Group: "addons.in-cloud.io", Version: "v1alpha1"}

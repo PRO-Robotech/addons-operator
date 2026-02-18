@@ -113,7 +113,7 @@ func TestEvalEqual(t *testing.T) {
 			name:     "string vs number type coercion",
 			actual:   "42",
 			expected: jsonValue(`42`),
-			want:     true, // Type coercion via string comparison
+			want:     true, // Numeric coercion: both parseable as float64
 		},
 	}
 
@@ -578,6 +578,9 @@ func TestDeepEqual(t *testing.T) {
 		{"same arrays", []any{1, 2}, []any{1, 2}, true},
 		{"different arrays", []any{1, 2}, []any{2, 1}, false},
 		{"same maps", map[string]any{"a": 1}, map[string]any{"a": 1}, true},
+		{"bool vs string", true, "true", false},
+		{"array vs string", []any{1}, "[1]", false},
+		{"int vs float64 same value", int64(42), float64(42), true},
 	}
 
 	for _, tt := range tests {

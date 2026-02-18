@@ -10,7 +10,7 @@ metadata:
     addons.in-cloud.io/addon: cilium
     addons.in-cloud.io/layer: defaults
 spec:
-  values:
+  values: |
     operator:
       replicas: 1
     ipam:
@@ -31,10 +31,9 @@ metadata:
     addons.in-cloud.io/addon: cilium
     addons.in-cloud.io/layer: immutable
 spec:
-  values:
-    # These values are enforced and cannot be overridden
+  values: |
     cluster:
-      name: "{{ .Variables.cluster_name }}"
+      name: {{ .Variables.cluster_name }}
     image:
       pullPolicy: IfNotPresent
 
@@ -48,7 +47,7 @@ metadata:
     addons.in-cloud.io/addon: cilium
     addons.in-cloud.io/feature.certificates: "true"
 spec:
-  values:
+  values: |
     tls:
       enabled: true
       auto:

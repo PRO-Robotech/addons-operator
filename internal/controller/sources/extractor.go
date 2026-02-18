@@ -65,7 +65,9 @@ func (e *extractor) Extract(ctx context.Context, sources []addonsv1alpha1.ValueS
 			if err != nil {
 				return nil, fmt.Errorf("source %s, path %s: %w", source.Name, rule.JSONPath, err)
 			}
-			setNestedField(result, rule.As, value)
+			if err := setNestedField(result, rule.As, value); err != nil {
+				return nil, fmt.Errorf("source %s, set %s: %w", source.Name, rule.As, err)
+			}
 		}
 	}
 
@@ -235,14 +237,14 @@ func decodeBase64(value any) (any, error) {
 	return string(decoded), nil
 }
 
-func setNestedField(obj map[string]any, path string, value any) {
+func setNestedField(obj map[string]any, path string, value any) error {
 	parts := strings.Split(path, ".")
 	current := obj
 
 	for i, part := range parts {
 		if i == len(parts)-1 {
 			current[part] = value
-			return
+			return nil
 		}
 
 		if _, ok := current[part]; !ok {
@@ -251,11 +253,10 @@ func setNestedField(obj map[string]any, path string, value any) {
 		if next, ok := current[part].(map[string]any); ok {
 			current = next
 		} else {
-			newMap := make(map[string]any)
-			current[part] = newMap
-			current = newMap
+			return fmt.Errorf("path %q: key %q is %T, not a map", path, part, current[part])
 		}
 	}
+	return nil
 }
 
 // SourceRefKey creates an index key for a SourceRef.

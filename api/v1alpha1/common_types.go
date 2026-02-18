@@ -92,7 +92,7 @@ type ExtractRule struct {
 
 	// Decode specifies optional decoding to apply.
 	// Supported: "base64" (for Secret data).
-	// +kubebuilder:validation:Enum=base64;""
+	// +kubebuilder:validation:Enum=base64
 	// +optional
 	Decode string `json:"decode,omitempty"`
 }
@@ -119,7 +119,9 @@ type Criterion struct {
 	Source *CriterionSource `json:"source,omitempty"`
 
 	// JSONPath specifies the path to the value in the resource.
-	// Uses RFC 6901 JSON Pointer syntax (e.g., "/status/phase").
+	// Uses RFC 9535 JSONPath syntax (e.g., "$.status.phase",
+	// "$.status.conditions[?@.type=='Ready'].status").
+	// For keys with dots, use bracket notation: "$.metadata.labels['app.kubernetes.io/name']".
 	// +kubebuilder:validation:Required
 	JSONPath string `json:"jsonPath"`
 
@@ -131,6 +133,12 @@ type Criterion struct {
 	// Use JSON encoding for non-string values.
 	// +optional
 	Value *apiextensionsv1.JSON `json:"value,omitempty"`
+
+	// Keep controls whether this criterion participates in rule latching.
+	// When true (default), once the rule matches, it stays matched permanently.
+	// When false, the rule is re-evaluated every reconcile cycle.
+	// +optional
+	Keep *bool `json:"keep,omitempty"`
 }
 
 // CriterionSource identifies a Kubernetes resource to evaluate.
@@ -144,8 +152,9 @@ type CriterionSource struct {
 	Kind string `json:"kind"`
 
 	// Name of the resource.
-	// +kubebuilder:validation:Required
-	Name string `json:"name"`
+	// Mutually exclusive with LabelSelector: exactly one must be specified.
+	// +optional
+	Name string `json:"name,omitempty"`
 
 	// Namespace of the resource.
 	// If empty, uses cluster-scoped lookup or same namespace as evaluating resource.

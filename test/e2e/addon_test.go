@@ -229,7 +229,7 @@ var _ = Describe("Basic Addon Deployment", Ordered, func() {
 					return err
 				}
 				// Update values
-				freshAV.Spec.Values.Raw = mustMarshal(map[string]interface{}{"key": "value2"})
+				freshAV.Spec.Values = string(mustMarshalYAML(map[string]interface{}{"key": "value2"}))
 				return k8sClient.Update(ctx, freshAV)
 			}, timeout, interval).Should(Succeed(), "Should update AddonValue")
 

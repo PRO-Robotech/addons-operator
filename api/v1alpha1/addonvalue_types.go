@@ -18,19 +18,18 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // AddonValueSpec defines the desired state of AddonValue.
 // It contains a fragment of Helm values that can be selected by Addon
 // through label matching.
 type AddonValueSpec struct {
-	// Values contains the Helm values fragment as arbitrary YAML/JSON.
+	// Values contains the Helm values fragment as raw YAML string.
+	// Use block scalar syntax (values: |) to write multi-line YAML.
 	// Values can include Go template expressions (e.g. .Variables.key)
-	// which are rendered during value aggregation.
-	// +kubebuilder:pruning:PreserveUnknownFields
+	// which are rendered before YAML parsing during value aggregation.
 	// +kubebuilder:validation:Required
-	Values runtime.RawExtension `json:"values"`
+	Values string `json:"values"`
 }
 
 // AddonValueStatus defines the observed state of AddonValue.

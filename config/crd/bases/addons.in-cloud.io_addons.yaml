@@ -24,6 +24,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
+    - jsonPath: .status.deployed
+      name: Deployed
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -174,6 +177,11 @@ spec:
                   Either Chart or Path must be specified, but not both.
                 maxLength: 253
                 type: string
+              finalizer:
+                description: |-
+                  Finalizer controls whether Argo CD resource finalizer is set on the Application.
+                  When true, deleting the Application will also delete all resources created by it.
+                type: boolean
               initDependencies:
                 description: |-
                   InitDependencies specifies dependencies that must be ready
@@ -196,8 +204,16 @@ spec:
                           jsonPath:
                             description: |-
                               JSONPath specifies the path to the value in the resource.
-                              Uses RFC 6901 JSON Pointer syntax (e.g., "/status/phase").
+                              Uses RFC 9535 JSONPath syntax (e.g., "$.status.phase",
+                              "$.status.conditions[?@.type=='Ready'].status").
+                              For keys with dots, use bracket notation: "$.metadata.labels['app.kubernetes.io/name']".
                             type: string
+                          keep:
+                            description: |-
+                              Keep controls whether this criterion participates in rule latching.
+                              When true (default), once the rule matches, it stays matched permanently.
+                              When false, the rule is re-evaluated every reconcile cycle.
+                            type: boolean
                           operator:
                             description: Operator specifies the comparison operation.
                             enum:
@@ -275,7 +291,9 @@ spec:
                                 type: object
                                 x-kubernetes-map-type: atomic
                               name:
-                                description: Name of the resource.
+                                description: |-
+                                  Name of the resource.
+                                  Mutually exclusive with LabelSelector: exactly one must be specified.
                                 type: string
                               namespace:
                                 description: |-
@@ -285,7 +303,6 @@ spec:
                             required:
                             - apiVersion
                             - kind
-                            - name
                             type: object
                           value:
                             description: |-
@@ -311,6 +328,20 @@ spec:
                   Path specifies the directory path within a Git repository containing the Helm chart.
                   Used when deploying from Git instead of a Helm repository.
                   Either Chart or Path must be specified, but not both.
+                maxLength: 253
+                type: string
+              pluginName:
+                description: |-
+                  PluginName specifies an ArgoCD Config Management Plugin to use instead of
+                  the built-in Helm source. When set, values are passed via HELM_VALUES
+                  environment variable (base64-encoded) instead of source.helm.values.
+                maxLength: 253
+                type: string
+              releaseName:
+                description: |-
+                  ReleaseName overrides the Helm release name. In Helm mode, it maps to
+                  source.helm.releaseName. In Plugin mode, it is passed as a RELEASE_NAME
+                  environment variable.
                 maxLength: 253
                 type: string
               repoURL:
@@ -391,7 +422,6 @@ spec:
                               Supported: "base64" (for Secret data).
                             enum:
                             - base64
-                            - ""
                             type: string
                           jsonPath:
                             description: |-
@@ -536,6 +566,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              deployed:
+                description: |-
+                  Deployed indicates that the Addon has been successfully deployed at least once.
+                  Once set to true, this field is never reset to false.
+                type: boolean
               observedGeneration:
                 description: ObservedGeneration is the last spec.generation processed
                   by the controller.

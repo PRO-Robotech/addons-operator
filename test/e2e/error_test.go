@@ -72,7 +72,7 @@ var _ = Describe("Error Recovery & Edge Cases", Ordered, func() {
 			By("Creating blocked Addon with initDependencies")
 			// Build criterion: depAddon Ready condition status == "True"
 			criterion := NewCriterion().
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()
@@ -363,13 +363,13 @@ var _ = Describe("Error Recovery & Edge Cases", Ordered, func() {
 
 			By("Creating Addon with multiple initDependencies")
 			criterion1 := NewCriterion().
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()
 
 			criterion2 := NewCriterion().
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()
@@ -560,7 +560,7 @@ var _ = Describe("Edge Cases", Ordered, func() {
 					}, freshValues); err != nil {
 						return err
 					}
-					freshValues.Spec.Values.Raw = mustMarshal(map[string]interface{}{"counter": i})
+					freshValues.Spec.Values = string(mustMarshalYAML(map[string]interface{}{"counter": i}))
 					return k8sClient.Update(ctx, freshValues)
 				}, timeout, interval).Should(Succeed(),
 					"Should update AddonValue iteration %d", i)
@@ -621,7 +621,7 @@ var _ = Describe("Edge Cases", Ordered, func() {
 		It("should handle non-existent dependency gracefully", func() {
 			By("Creating Addon with dependency on non-existent Addon")
 			criterion := NewCriterion().
-				WithJSONPath("/status/conditions[?(@.type=='Ready')]/status").
+				WithJSONPath("$.status.conditions[?@.type=='Ready'].status").
 				WithOperator(addonsv1alpha1.OperatorEqual).
 				WithValue("True").
 				Build()

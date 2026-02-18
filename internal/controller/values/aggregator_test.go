@@ -18,7 +18,6 @@ package values
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,17 +25,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	"addons-operator/internal/controller/sources"
 )
 
-// Helper to create runtime.RawExtension from map
-func rawExtension(v any) runtime.RawExtension {
-	data, err := json.Marshal(v)
+// Helper to create YAML string from map
+func mustYAML(v any) string {
+	data, err := yaml.Marshal(v)
 	if err != nil {
 		panic(err)
 	}
-	return runtime.RawExtension{Raw: data}
+	return string(data)
+}
+
+// emptyTemplateCtx returns an empty TemplateContext for tests that don't need templates.
+func emptyTemplateCtx() sources.TemplateContext {
+	return sources.TemplateContext{}
 }
 
 func TestDeepMerge(t *testing.T) {
@@ -174,43 +180,49 @@ func TestDeepMerge(t *testing.T) {
 	}
 }
 
-func TestUnmarshalValues(t *testing.T) {
+func TestParseYAML(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    []byte
+		input    string
 		expected map[string]any
 		wantErr  bool
 	}{
 		{
 			name:     "empty input",
-			input:    []byte{},
+			input:    "",
 			expected: map[string]any{},
 			wantErr:  false,
 		},
 		{
-			name:     "valid JSON",
-			input:    []byte(`{"key": "value", "number": 42}`),
+			name:     "valid YAML",
+			input:    "key: value\nnumber: 42",
 			expected: map[string]any{"key": "value", "number": float64(42)},
 			wantErr:  false,
 		},
 		{
-			name:    "invalid JSON",
-			input:   []byte(`{invalid}`),
+			name:    "invalid YAML",
+			input:   ":\n  invalid: [yaml",
 			wantErr: true,
 		},
 		{
-			name:  "nested JSON",
-			input: []byte(`{"outer": {"inner": "value"}}`),
+			name:  "nested YAML",
+			input: "outer:\n  inner: value",
 			expected: map[string]any{
 				"outer": map[string]any{"inner": "value"},
 			},
 			wantErr: false,
 		},
+		{
+			name:     "YAML with only comments/whitespace",
+			input:    "# just a comment\n",
+			expected: map[string]any{},
+			wantErr:  false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := UnmarshalValues(tt.input)
+			result, err := ParseYAML(tt.input)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -225,6 +237,8 @@ func TestAggregator_AggregateValues(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
 
+	engine := sources.NewTemplateEngine()
+
 	// Create test AddonValues with different labels and priorities
 	baseValues := &addonsv1alpha1.AddonValue{
 		ObjectMeta: metav1.ObjectMeta{
@@ -235,7 +249,7 @@ func TestAggregator_AggregateValues(t *testing.T) {
 			},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{
+			Values: mustYAML(map[string]any{
 				"ipam": map[string]any{"mode": "kubernetes"},
 				"tls":  map[string]any{"enabled": false},
 			}),
@@ -251,7 +265,7 @@ func TestAggregator_AggregateValues(t *testing.T) {
 			},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{
+			Values: mustYAML(map[string]any{
 				"tls": map[string]any{
 					"enabled": true,
 					"ca":      "xxx",
@@ -269,7 +283,7 @@ func TestAggregator_AggregateValues(t *testing.T) {
 			},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{
+			Values: mustYAML(map[string]any{
 				"tls": map[string]any{
 					"enforceMode": "strict",
 				},
@@ -282,7 +296,7 @@ func TestAggregator_AggregateValues(t *testing.T) {
 		WithObjects(baseValues, certValues, immutableValues).
 		Build()
 
-	aggregator := NewAggregator(fakeClient)
+	aggregator := NewAggregator(fakeClient, engine)
 
 	// Create Addon with selectors at different priorities
 	addon := &addonsv1alpha1.Addon{
@@ -314,7 +328,7 @@ func TestAggregator_AggregateValues(t *testing.T) {
 		},
 	}
 
-	result, err := aggregator.AggregateValues(context.Background(), addon)
+	result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 	require.NoError(t, err)
 
 	// Verify the priority-based merge result
@@ -334,8 +348,9 @@ func TestAggregator_EmptySelectors(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
 
+	engine := sources.NewTemplateEngine()
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	aggregator := NewAggregator(fakeClient)
+	aggregator := NewAggregator(fakeClient, engine)
 
 	addon := &addonsv1alpha1.Addon{
 		ObjectMeta: metav1.ObjectMeta{
@@ -344,7 +359,7 @@ func TestAggregator_EmptySelectors(t *testing.T) {
 		Spec: addonsv1alpha1.AddonSpec{},
 	}
 
-	result, err := aggregator.AggregateValues(context.Background(), addon)
+	result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{}, result)
 }
@@ -353,8 +368,9 @@ func TestAggregator_NoMatchingValues(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
 
+	engine := sources.NewTemplateEngine()
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	aggregator := NewAggregator(fakeClient)
+	aggregator := NewAggregator(fakeClient, engine)
 
 	addon := &addonsv1alpha1.Addon{
 		ObjectMeta: metav1.ObjectMeta{
@@ -371,7 +387,7 @@ func TestAggregator_NoMatchingValues(t *testing.T) {
 		},
 	}
 
-	result, err := aggregator.AggregateValues(context.Background(), addon)
+	result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{}, result)
 }
@@ -379,6 +395,8 @@ func TestAggregator_NoMatchingValues(t *testing.T) {
 func TestAggregator_SortByName(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	engine := sources.NewTemplateEngine()
 
 	// Create AddonValues with same labels but different names
 	// They should be merged in alphabetical order
@@ -388,7 +406,7 @@ func TestAggregator_SortByName(t *testing.T) {
 			Labels: map[string]string{"app": "test"},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{"key": "from-b"}),
+			Values: "key: from-b",
 		},
 	}
 
@@ -398,7 +416,7 @@ func TestAggregator_SortByName(t *testing.T) {
 			Labels: map[string]string{"app": "test"},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{"key": "from-a"}),
+			Values: "key: from-a",
 		},
 	}
 
@@ -407,7 +425,7 @@ func TestAggregator_SortByName(t *testing.T) {
 		WithObjects(valueA, valueB).
 		Build()
 
-	aggregator := NewAggregator(fakeClient)
+	aggregator := NewAggregator(fakeClient, engine)
 
 	addon := &addonsv1alpha1.Addon{
 		ObjectMeta: metav1.ObjectMeta{
@@ -424,12 +442,170 @@ func TestAggregator_SortByName(t *testing.T) {
 		},
 	}
 
-	result, err := aggregator.AggregateValues(context.Background(), addon)
+	result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 	require.NoError(t, err)
 
 	// a-value is processed first, b-value second (alphabetical)
 	// So b-value's "key" should override a-value's "key"
 	assert.Equal(t, "from-b", result["key"])
+}
+
+func TestAggregator_TemplateRendering(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+
+	engine := sources.NewTemplateEngine()
+
+	t.Run("type preservation with templates", func(t *testing.T) {
+		av := &addonsv1alpha1.AddonValue{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "template-types",
+				Labels: map[string]string{"addons.in-cloud.io/addon": "test"},
+			},
+			Spec: addonsv1alpha1.AddonValueSpec{
+				Values: "replicas: {{ .Variables.count }}\nenabled: {{ .Variables.flag }}",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(av).
+			Build()
+
+		aggregator := NewAggregator(fakeClient, engine)
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec: addonsv1alpha1.AddonSpec{
+				ValuesSelectors: []addonsv1alpha1.ValuesSelector{{
+					Name:        "default",
+					Priority:    0,
+					MatchLabels: map[string]string{"addons.in-cloud.io/addon": "test"},
+				}},
+			},
+		}
+
+		tmplCtx := sources.TemplateContext{
+			Variables: map[string]string{"count": "3", "flag": "true"},
+		}
+
+		result, err := aggregator.AggregateValues(context.Background(), addon, tmplCtx)
+		require.NoError(t, err)
+
+		// Templates rendered before YAML parsing → native types preserved
+		assert.Equal(t, float64(3), result["replicas"], "replicas should be numeric, not string")
+		assert.Equal(t, true, result["enabled"], "enabled should be bool, not string")
+	})
+
+	t.Run("template with variables and values from sources", func(t *testing.T) {
+		av := &addonsv1alpha1.AddonValue{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "template-sources",
+				Labels: map[string]string{"addons.in-cloud.io/addon": "test"},
+			},
+			Spec: addonsv1alpha1.AddonValueSpec{
+				Values: "cluster:\n  name: {{ .Variables.cluster_name }}\n  podCIDR: {{ .Values.network.podCIDR }}",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(av).
+			Build()
+
+		aggregator := NewAggregator(fakeClient, engine)
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec: addonsv1alpha1.AddonSpec{
+				ValuesSelectors: []addonsv1alpha1.ValuesSelector{{
+					Name:        "default",
+					Priority:    0,
+					MatchLabels: map[string]string{"addons.in-cloud.io/addon": "test"},
+				}},
+			},
+		}
+
+		tmplCtx := sources.TemplateContext{
+			Variables: map[string]string{"cluster_name": "production"},
+			Values: map[string]any{
+				"network": map[string]any{"podCIDR": "10.244.0.0/16"},
+			},
+		}
+
+		result, err := aggregator.AggregateValues(context.Background(), addon, tmplCtx)
+		require.NoError(t, err)
+
+		cluster, ok := result["cluster"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "production", cluster["name"])
+		assert.Equal(t, "10.244.0.0/16", cluster["podCIDR"])
+	})
+
+	t.Run("template error propagation", func(t *testing.T) {
+		av := &addonsv1alpha1.AddonValue{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "template-error",
+				Labels: map[string]string{"addons.in-cloud.io/addon": "test"},
+			},
+			Spec: addonsv1alpha1.AddonValueSpec{
+				Values: "key: {{ .Variables.missing }}",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(av).
+			Build()
+
+		aggregator := NewAggregator(fakeClient, engine)
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec: addonsv1alpha1.AddonSpec{
+				ValuesSelectors: []addonsv1alpha1.ValuesSelector{{
+					Name:        "default",
+					Priority:    0,
+					MatchLabels: map[string]string{"addons.in-cloud.io/addon": "test"},
+				}},
+			},
+		}
+
+		_, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "render templates in template-error")
+	})
+
+	t.Run("no templates passthrough", func(t *testing.T) {
+		av := &addonsv1alpha1.AddonValue{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "no-templates",
+				Labels: map[string]string{"addons.in-cloud.io/addon": "test"},
+			},
+			Spec: addonsv1alpha1.AddonValueSpec{
+				Values: "static: value\ncount: 42",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(av).
+			Build()
+
+		aggregator := NewAggregator(fakeClient, engine)
+		addon := &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{Name: "test"},
+			Spec: addonsv1alpha1.AddonSpec{
+				ValuesSelectors: []addonsv1alpha1.ValuesSelector{{
+					Name:        "default",
+					Priority:    0,
+					MatchLabels: map[string]string{"addons.in-cloud.io/addon": "test"},
+				}},
+			},
+		}
+
+		result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
+		require.NoError(t, err)
+		assert.Equal(t, "value", result["static"])
+		assert.Equal(t, float64(42), result["count"])
+	})
 }
 
 func TestComputeHash(t *testing.T) {
@@ -639,6 +815,8 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
 
+	engine := sources.NewTemplateEngine()
+
 	// Create AddonValues with addon-prefixed labels
 	baseOnly := &addonsv1alpha1.AddonValue{
 		ObjectMeta: metav1.ObjectMeta{
@@ -648,7 +826,7 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 			},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{"source": "base"}),
+			Values: "source: base",
 		},
 	}
 
@@ -661,7 +839,7 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 			},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
-			Values: rawExtension(map[string]any{"source": "feature"}),
+			Values: "source: feature",
 		},
 	}
 
@@ -670,7 +848,7 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 		WithObjects(baseOnly, baseWithFeature).
 		Build()
 
-	aggregator := NewAggregator(fakeClient)
+	aggregator := NewAggregator(fakeClient, engine)
 
 	t.Run("single label selector matches only single label resource", func(t *testing.T) {
 		addon := &addonsv1alpha1.Addon{
@@ -690,7 +868,7 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 			},
 		}
 
-		result, err := aggregator.AggregateValues(context.Background(), addon)
+		result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 		require.NoError(t, err)
 
 		// Should only select test-base (single addon label), not test-feature
@@ -716,7 +894,7 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 			},
 		}
 
-		result, err := aggregator.AggregateValues(context.Background(), addon)
+		result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 		require.NoError(t, err)
 
 		// Should only select test-feature (two addon labels), not test-base
@@ -749,7 +927,7 @@ func TestAggregator_ExactMatchLabels(t *testing.T) {
 			},
 		}
 
-		result, err := aggregator.AggregateValues(context.Background(), addon)
+		result, err := aggregator.AggregateValues(context.Background(), addon, emptyTemplateCtx())
 		require.NoError(t, err)
 
 		// Priority 0 (base) processed first, priority 10 (feature) second

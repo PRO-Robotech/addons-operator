@@ -17,6 +17,7 @@ limitations under the License.
 package argocd
 
 import (
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"reflect"
@@ -25,6 +26,7 @@ import (
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
@@ -35,9 +37,7 @@ const (
 	defaultTargetCluster = "https://kubernetes.default.svc"
 	inClusterDestination = "in-cluster"
 
-	// Addon GVK for ownerReference - TypeMeta is not populated after Get()
-	addonAPIVersion = "addons.in-cloud.io/v1alpha1"
-	addonKind       = "Addon"
+	argocdResourcesFinalizer = "resources-finalizer.argocd.argoproj.io"
 )
 
 // ApplicationBuilder constructs Argo CD Application resources from Addon specs.
@@ -54,6 +54,19 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 		return nil, fmt.Errorf("marshal values to YAML: %w", err)
 	}
 
+	source := &argocdv1alpha1.ApplicationSource{
+		Chart:          addon.Spec.Chart,
+		Path:           addon.Spec.Path,
+		RepoURL:        addon.Spec.RepoURL,
+		TargetRevision: addon.Spec.Version,
+	}
+
+	if addon.Spec.PluginName != "" {
+		source.Plugin = buildPluginSource(addon.Spec.PluginName, addon.Spec.ReleaseName, valuesYAML)
+	} else {
+		source.Helm = buildHelmSource(string(valuesYAML), addon.Spec.ReleaseName)
+	}
+
 	app := &argocdv1alpha1.Application{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "argoproj.io/v1alpha1",
@@ -68,8 +81,8 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion:         addonAPIVersion,
-					Kind:               addonKind,
+					APIVersion:         addonsv1alpha1.GroupVersion.String(),
+					Kind:               addonsv1alpha1.AddonKind,
 					Name:               addon.Name,
 					UID:                addon.UID,
 					Controller:         ptr.To(true),
@@ -78,23 +91,48 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 			},
 		},
 		Spec: argocdv1alpha1.ApplicationSpec{
-			Project: b.getProject(addon),
-			Source: &argocdv1alpha1.ApplicationSource{
-				Chart:          addon.Spec.Chart,
-				Path:           addon.Spec.Path,
-				RepoURL:        addon.Spec.RepoURL,
-				TargetRevision: addon.Spec.Version,
-				Helm: &argocdv1alpha1.ApplicationSourceHelm{
-					Values: string(valuesYAML),
-				},
-			},
+			Project:           b.getProject(addon),
+			Source:            source,
 			Destination:       b.getDestination(addon),
 			SyncPolicy:        b.getSyncPolicy(addon),
 			IgnoreDifferences: b.getIgnoreDifferences(addon),
 		},
 	}
 
+	if addon.Spec.Finalizer != nil && *addon.Spec.Finalizer {
+		app.Finalizers = []string{argocdResourcesFinalizer}
+	}
+
 	return app, nil
+}
+
+func buildHelmSource(valuesYAML string, releaseName string) *argocdv1alpha1.ApplicationSourceHelm {
+	helm := &argocdv1alpha1.ApplicationSourceHelm{
+		Values: valuesYAML,
+	}
+	if releaseName != "" {
+		helm.ReleaseName = releaseName
+	}
+	return helm
+}
+
+func buildPluginSource(pluginName string, releaseName string, valuesYAML []byte) *argocdv1alpha1.ApplicationSourcePlugin {
+	env := argocdv1alpha1.Env{
+		&argocdv1alpha1.EnvEntry{
+			Name:  "HELM_VALUES",
+			Value: base64.StdEncoding.EncodeToString(valuesYAML),
+		},
+	}
+	if releaseName != "" {
+		env = append(env, &argocdv1alpha1.EnvEntry{
+			Name:  "RELEASE_NAME",
+			Value: releaseName,
+		})
+	}
+	return &argocdv1alpha1.ApplicationSourcePlugin{
+		Name: pluginName,
+		Env:  env,
+	}
 }
 
 func (b *ApplicationBuilder) getProject(addon *addonsv1alpha1.Addon) string {
@@ -187,6 +225,12 @@ func (b *ApplicationBuilder) UpdateSpec(existing *argocdv1alpha1.Application, ad
 	}
 	maps.Copy(existing.Labels, desired.Labels)
 
+	if controllerutil.ContainsFinalizer(desired, argocdResourcesFinalizer) {
+		controllerutil.AddFinalizer(existing, argocdResourcesFinalizer)
+	} else {
+		controllerutil.RemoveFinalizer(existing, argocdResourcesFinalizer)
+	}
+
 	return nil
 }
 
@@ -217,31 +261,8 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 		return true, fmt.Sprintf("destination differs: existing=%+v, desired=%+v", existing.Spec.Destination, desired.Spec.Destination), nil
 	}
 
-	if existing.Spec.Source == nil && desired.Spec.Source != nil {
-		return true, "existing source is nil, desired is not", nil
-	}
-	if existing.Spec.Source != nil && desired.Spec.Source != nil {
-		if existing.Spec.Source.Chart != desired.Spec.Source.Chart {
-			return true, fmt.Sprintf("chart differs: existing=%q, desired=%q", existing.Spec.Source.Chart, desired.Spec.Source.Chart), nil
-		}
-		if existing.Spec.Source.Path != desired.Spec.Source.Path {
-			return true, fmt.Sprintf("path differs: existing=%q, desired=%q", existing.Spec.Source.Path, desired.Spec.Source.Path), nil
-		}
-		if existing.Spec.Source.RepoURL != desired.Spec.Source.RepoURL {
-			return true, fmt.Sprintf("repoURL differs: existing=%q, desired=%q", existing.Spec.Source.RepoURL, desired.Spec.Source.RepoURL), nil
-		}
-		if existing.Spec.Source.TargetRevision != desired.Spec.Source.TargetRevision {
-			return true, fmt.Sprintf("targetRevision differs: existing=%q, desired=%q", existing.Spec.Source.TargetRevision, desired.Spec.Source.TargetRevision), nil
-		}
-
-		if existing.Spec.Source.Helm == nil && desired.Spec.Source.Helm != nil {
-			return true, "existing helm is nil, desired is not", nil
-		}
-		if existing.Spec.Source.Helm != nil && desired.Spec.Source.Helm != nil {
-			if existing.Spec.Source.Helm.Values != desired.Spec.Source.Helm.Values {
-				return true, fmt.Sprintf("helm values differ: existing len=%d, desired len=%d", len(existing.Spec.Source.Helm.Values), len(desired.Spec.Source.Helm.Values)), nil
-			}
-		}
+	if needsUpdate, reason := b.needsSourceUpdate(existing.Spec.Source, desired.Spec.Source); needsUpdate {
+		return true, reason, nil
 	}
 
 	if !reflect.DeepEqual(existing.Spec.SyncPolicy, desired.Spec.SyncPolicy) {
@@ -252,5 +273,81 @@ func (b *ApplicationBuilder) NeedsUpdate(existing *argocdv1alpha1.Application, a
 		return true, "ignoreDifferences differs", nil
 	}
 
+	desiredFinalizer := controllerutil.ContainsFinalizer(desired, argocdResourcesFinalizer)
+	hasFinalizer := controllerutil.ContainsFinalizer(existing, argocdResourcesFinalizer)
+	if desiredFinalizer != hasFinalizer {
+		return true, "argocd resource finalizer differs", nil
+	}
+
 	return false, "", nil
+}
+
+// needsSourceUpdate compares two ApplicationSource specs and returns whether they differ.
+func (b *ApplicationBuilder) needsSourceUpdate(existing, desired *argocdv1alpha1.ApplicationSource) (bool, string) {
+	if existing == nil && desired != nil {
+		return true, "existing source is nil, desired is not"
+	}
+	if existing == nil || desired == nil {
+		return false, ""
+	}
+
+	if existing.Chart != desired.Chart {
+		return true, fmt.Sprintf("chart differs: existing=%q, desired=%q", existing.Chart, desired.Chart)
+	}
+	if existing.Path != desired.Path {
+		return true, fmt.Sprintf("path differs: existing=%q, desired=%q", existing.Path, desired.Path)
+	}
+	if existing.RepoURL != desired.RepoURL {
+		return true, fmt.Sprintf("repoURL differs: existing=%q, desired=%q", existing.RepoURL, desired.RepoURL)
+	}
+	if existing.TargetRevision != desired.TargetRevision {
+		return true, fmt.Sprintf("targetRevision differs: existing=%q, desired=%q", existing.TargetRevision, desired.TargetRevision)
+	}
+
+	if needsUpdate, reason := b.needsHelmUpdate(existing.Helm, desired.Helm); needsUpdate {
+		return true, reason
+	}
+
+	if needsUpdate, reason := b.needsPluginUpdate(existing.Plugin, desired.Plugin); needsUpdate {
+		return true, reason
+	}
+
+	return false, ""
+}
+
+// needsHelmUpdate compares two Helm source specs.
+func (b *ApplicationBuilder) needsHelmUpdate(existing, desired *argocdv1alpha1.ApplicationSourceHelm) (bool, string) {
+	if existing == nil && desired != nil {
+		return true, "existing helm is nil, desired is not"
+	}
+	if existing != nil && desired == nil {
+		return true, "existing helm is not nil, desired is nil"
+	}
+	if existing == nil {
+		return false, ""
+	}
+	if existing.Values != desired.Values {
+		return true, fmt.Sprintf("helm values differ: existing len=%d, desired len=%d", len(existing.Values), len(desired.Values))
+	}
+	if existing.ReleaseName != desired.ReleaseName {
+		return true, fmt.Sprintf("helm releaseName differs: existing=%q, desired=%q", existing.ReleaseName, desired.ReleaseName)
+	}
+	return false, ""
+}
+
+// needsPluginUpdate compares two Plugin source specs.
+func (b *ApplicationBuilder) needsPluginUpdate(existing, desired *argocdv1alpha1.ApplicationSourcePlugin) (bool, string) {
+	if existing == nil && desired != nil {
+		return true, "existing plugin is nil, desired is not"
+	}
+	if existing != nil && desired == nil {
+		return true, "existing plugin is not nil, desired is nil"
+	}
+	if existing == nil {
+		return false, ""
+	}
+	if !existing.Equals(desired) {
+		return true, "plugin differs"
+	}
+	return false, ""
 }

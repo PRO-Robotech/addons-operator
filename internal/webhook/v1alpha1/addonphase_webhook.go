@@ -20,11 +20,8 @@ import (
 	"context"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -37,33 +34,35 @@ var addonphaselog = logf.Log.WithName("addonphase-resource")
 // SetupAddonPhaseWebhookWithManager registers the webhook for AddonPhase in the manager.
 func SetupAddonPhaseWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(&addonsv1alpha1.AddonPhase{}).
-		WithValidator(&AddonPhaseCustomValidator{Client: mgr.GetClient()}).
+		WithValidator(&AddonPhaseCustomValidator{}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/validate-addons-in-cloud-io-v1alpha1-addonphase,mutating=false,failurePolicy=fail,sideEffects=None,groups=addons.in-cloud.io,resources=addonphases,verbs=create;update,versions=v1alpha1,name=vaddonphase-v1alpha1.kb.io,admissionReviewVersions=v1
 
 // AddonPhaseCustomValidator validates the AddonPhase resource.
-// It requires a client to check that the referenced Addon exists.
-type AddonPhaseCustomValidator struct {
-	Client client.Client
-}
+type AddonPhaseCustomValidator struct{}
 
 var _ webhook.CustomValidator = &AddonPhaseCustomValidator{}
 
 // ValidateCreate validates AddonPhase on creation.
-func (v *AddonPhaseCustomValidator) ValidateCreate(ctx context.Context, obj runtime.Object) (admission.Warnings, error) {
+func (v *AddonPhaseCustomValidator) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
 	addonphase, ok := obj.(*addonsv1alpha1.AddonPhase)
 	if !ok {
 		return nil, fmt.Errorf("expected an AddonPhase object but got %T", obj)
 	}
 	addonphaselog.Info("Validation for AddonPhase upon creation", "name", addonphase.GetName())
 
-	return nil, v.validateAddonPhase(ctx, addonphase)
+	return nil, validateAddonPhase(addonphase)
 }
 
 // ValidateUpdate validates AddonPhase on update.
-func (v *AddonPhaseCustomValidator) ValidateUpdate(ctx context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
+func (v *AddonPhaseCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	oldPhase, ok := oldObj.(*addonsv1alpha1.AddonPhase)
+	if !ok {
+		return nil, fmt.Errorf("expected an AddonPhase object for the oldObj but got %T", oldObj)
+	}
+
 	addonphase, ok := newObj.(*addonsv1alpha1.AddonPhase)
 	if !ok {
 		return nil, fmt.Errorf("expected an AddonPhase object for the newObj but got %T", newObj)
@@ -71,12 +70,15 @@ func (v *AddonPhaseCustomValidator) ValidateUpdate(ctx context.Context, _, newOb
 	addonphaselog.Info("Validation for AddonPhase upon update", "name", addonphase.GetName())
 
 	// Skip validation during deletion (finalizer removal)
-	// The Addon may already be deleted at this point
 	if !addonphase.DeletionTimestamp.IsZero() {
 		return nil, nil
 	}
 
-	return nil, v.validateAddonPhase(ctx, addonphase)
+	if err := validateKeepImmutability(oldPhase, addonphase); err != nil {
+		return nil, err
+	}
+
+	return nil, validateAddonPhase(addonphase)
 }
 
 // ValidateDelete validates AddonPhase on deletion.
@@ -91,24 +93,18 @@ func (v *AddonPhaseCustomValidator) ValidateDelete(_ context.Context, obj runtim
 }
 
 // validateAddonPhase performs validation rules for AddonPhase.
-func (v *AddonPhaseCustomValidator) validateAddonPhase(ctx context.Context, addonphase *addonsv1alpha1.AddonPhase) error {
-	// Validate that Addon with the same name exists (1:1 relationship)
-	addon := &addonsv1alpha1.Addon{}
-	err := v.Client.Get(ctx, types.NamespacedName{Name: addonphase.Name}, addon)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("addon %s not found: AddonPhase must have a corresponding Addon with the same name", addonphase.Name)
-		}
-		return fmt.Errorf("failed to check addon existence: %w", err)
-	}
-
-	// Validate unique rule names
+func validateAddonPhase(addonphase *addonsv1alpha1.AddonPhase) error {
+	// Validate unique rule names and criteria
 	ruleNames := make(map[string]struct{})
-	for _, rule := range addonphase.Spec.Rules {
+	for i, rule := range addonphase.Spec.Rules {
 		if _, exists := ruleNames[rule.Name]; exists {
 			return fmt.Errorf("duplicate rule name: %s", rule.Name)
 		}
 		ruleNames[rule.Name] = struct{}{}
+
+		if err := validateCriteria(rule.Criteria, fmt.Sprintf("spec.rules[%d].criteria", i)); err != nil {
+			return err
+		}
 	}
 
 	return nil

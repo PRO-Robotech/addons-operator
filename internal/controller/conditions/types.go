@@ -64,12 +64,13 @@ const (
 
 // Addon-specific Progressing condition reasons.
 const (
-	ReasonWaitingForSync       = "WaitingForSync"
-	ReasonWaitingForHealthy    = "WaitingForHealthy"
-	ReasonWaitingForDependency = "WaitingForDependency"
-	ReasonCreatingApplication  = "CreatingApplication"
-	ReasonResolvingValues      = "ResolvingValues"
-	ReasonPaused               = "Paused"
+	ReasonWaitingForSync         = "WaitingForSync"
+	ReasonWaitingForHealthy      = "WaitingForHealthy"
+	ReasonWaitingForDependency   = "WaitingForDependency"
+	ReasonCreatingApplication    = "CreatingApplication"
+	ReasonResolvingValues        = "ResolvingValues"
+	ReasonPaused                 = "Paused"
+	ReasonWaitingForStableValues = "WaitingForStableValues"
 )
 
 // Addon-specific Degraded condition reasons.

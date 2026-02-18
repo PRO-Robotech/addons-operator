@@ -170,9 +170,8 @@ func (m *manager) ReleaseWatch(gvk schema.GroupVersionKind) {
 		"refCount", entry.refCount)
 
 	if entry.refCount <= 0 {
-		// Mark as inactive (actual cleanup handled by lifecycle management)
-		entry.active = false
-		m.logger.Info("watch marked inactive", "gvk", gvk.String())
+		delete(m.watches, gvk)
+		m.logger.Info("watch removed from tracking", "gvk", gvk.String())
 	}
 }
 
