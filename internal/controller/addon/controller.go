@@ -47,15 +47,16 @@ import (
 )
 
 const (
-	requeueIntervalDegraded  = 60 * time.Second
-	requeueIntervalStabilize = 1 * time.Second
-	finalizerName            = "addons.in-cloud.io/finalizer"
-	addonLabelKey            = "addons.in-cloud.io/addon"
-	valuesSourcesIndexKey    = "spec.valuesSources.sourceRef"
-	dependencyIndexKey       = "spec.initDependencies.name"
-	setupTimeout             = 30 * time.Second
-	pauseAnnotationKey       = "addons.in-cloud.io/paused"
-	pauseAnnotationValueTrue = "true"
+	requeueIntervalDegraded   = 60 * time.Second
+	requeueIntervalStabilize  = 1 * time.Second
+	requeueIntervalDeleteWait = 5 * time.Second
+	finalizerName             = "addons.in-cloud.io/finalizer"
+	addonLabelKey             = "addons.in-cloud.io/addon"
+	valuesSourcesIndexKey     = "spec.valuesSources.sourceRef"
+	dependencyIndexKey        = "spec.initDependencies.name"
+	setupTimeout              = 30 * time.Second
+	pauseAnnotationKey        = "addons.in-cloud.io/paused"
+	pauseAnnotationValueTrue  = "true"
 )
 
 // AddonReconciler reconciles Addon objects.
@@ -223,34 +224,51 @@ func (r *AddonReconciler) reconcileDelete(ctx context.Context, addon *addonsv1al
 	// Cleanup dynamic watches for this Addon
 	r.cleanupWatchesForAddon(addon)
 
-	if controllerutil.ContainsFinalizer(addon, finalizerName) {
-		// Explicitly delete ArgoCD Application for reliability
-		// (OwnerReference may not work for cross-namespace resources)
-		argoApp := &argocdv1alpha1.Application{}
-		argoApp.Name = addon.Name
-		argoApp.Namespace = addon.Spec.Backend.Namespace
+	if !controllerutil.ContainsFinalizer(addon, finalizerName) {
+		return ctrl.Result{}, nil
+	}
 
-		if err := r.Delete(ctx, argoApp); client.IgnoreNotFound(err) != nil {
-			logger.Error(err, "Failed to delete ArgoCD Application", "name", argoApp.Name, "namespace", argoApp.Namespace)
+	// Explicitly delete ArgoCD Application for reliability
+	// (OwnerReference may not work for cross-namespace resources)
+	argoApp := &argocdv1alpha1.Application{}
+	argoApp.Name = addon.Name
+	argoApp.Namespace = addon.Spec.Backend.Namespace
 
-			return ctrl.Result{}, err
+	if err := r.Delete(ctx, argoApp); client.IgnoreNotFound(err) != nil {
+		logger.Error(err, "Failed to delete ArgoCD Application", "name", argoApp.Name, "namespace", argoApp.Namespace)
+
+		return ctrl.Result{}, err
+	}
+
+	// Wait for Application to be fully deleted (ArgoCD may have its own finalizer)
+	existing := &argocdv1alpha1.Application{}
+	err := r.Get(ctx, types.NamespacedName{Name: argoApp.Name, Namespace: argoApp.Namespace}, existing)
+
+	switch {
+	case err == nil:
+		logger.Info("Waiting for ArgoCD Application to be fully deleted",
+			"name", argoApp.Name, "namespace", argoApp.Namespace)
+
+		return ctrl.Result{RequeueAfter: requeueIntervalDeleteWait}, nil
+	case !apierrors.IsNotFound(err):
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("ArgoCD Application deleted", "name", argoApp.Name, "namespace", argoApp.Namespace)
+
+	// Remove finalizer after Application is fully gone
+	addonKey := client.ObjectKeyFromObject(addon)
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &addonsv1alpha1.Addon{}
+		if getErr := r.Get(ctx, addonKey, fresh); getErr != nil {
+			return getErr
 		}
-		logger.Info("Deleted ArgoCD Application", "name", argoApp.Name, "namespace", argoApp.Namespace)
+		controllerutil.RemoveFinalizer(fresh, finalizerName)
 
-		// Remove finalizer after cleanup
-		addonKey := client.ObjectKeyFromObject(addon)
-		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			fresh := &addonsv1alpha1.Addon{}
-			if getErr := r.Get(ctx, addonKey, fresh); getErr != nil {
-				return getErr
-			}
-			controllerutil.RemoveFinalizer(fresh, finalizerName)
-
-			return r.Update(ctx, fresh)
-		})
-		if err != nil {
-			return ctrl.Result{}, err
-		}
+		return r.Update(ctx, fresh)
+	})
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
