@@ -1054,7 +1054,7 @@ var _ = Describe("Addon Controller", func() {
 			}, timeout, interval).Should(Equal(metav1.ConditionFalse))
 			By("Updating Addon spec while paused")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
-			addon.Spec.Version = "2.0.0" //nolint:goconst // test version string, no benefit from constant
+			addon.Spec.Version = "2.0.0"
 			Expect(k8sClient.Update(ctx, addon)).To(Succeed())
 			By("Verifying Application is not updated while paused")
 			Consistently(func() string {

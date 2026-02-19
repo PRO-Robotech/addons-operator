@@ -79,7 +79,6 @@ linters:
 
     goconst:
       min-occurrences: 3
-      ignore-tests: true
 
     dupl:
       threshold: 120
@@ -136,6 +135,7 @@ linters:
           - gocyclo
           - gosec
           - dupl
+          - goconst
           - noctx
           - errcheck
           - nilerr
