@@ -98,6 +98,52 @@ spec:
           addons.in-cloud.io/feature.tls: "true"
 ```
 
+### [AddonClaim](concepts/addon-claim.md)
+
+Запрос на развёртывание аддона в удалённом infra-кластере:
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonClaim
+metadata:
+  name: cilium
+  namespace: tenant-a
+spec:
+  name: cilium
+  version: v1.17.4
+  cluster: client-cluster-01
+  credentialRef:
+    name: infra-kubeconfig
+  templateRef:
+    name: cilium-v1.17.4
+```
+
+### [AddonTemplate](concepts/addon-template.md)
+
+Переиспользуемый шаблон для генерации Addon из AddonClaim:
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonTemplate
+metadata:
+  name: cilium-v1.17.4
+spec:
+  template: |
+    apiVersion: addons.in-cloud.io/v1alpha1
+    kind: Addon
+    metadata:
+      name: {{ .Values.spec.name }}
+    spec:
+      chart: cilium
+      repoURL: https://helm.cilium.io
+      version: "{{ .Values.spec.version }}"
+      targetCluster: "{{ .Values.spec.cluster }}"
+      targetNamespace: kube-system
+      backend:
+        type: argocd
+        namespace: argocd
+```
+
 ## Возможности
 
 - **Декларативное управление** — определяйте аддоны как Kubernetes-ресурсы
@@ -107,10 +153,11 @@ spec:
 - **Интеграция с Argo CD** — GitOps для развёртывания и синхронизации аддонов
 - **Поддержка шаблонов** — Go templates для динамической генерации values
 - **Динамические источники данных** — извлечение values из любых Kubernetes ресурсов (Secret, ConfigMap, Deployment, CRD и др.) с автоматическим отслеживанием изменений
+- **Мультикластерное управление** — развёртывание аддонов в удалённые кластеры через AddonClaim и AddonTemplate
 
 ## Архитектура
 
-Оператор состоит из двух контроллеров:
+Оператор состоит из трёх контроллеров:
 
 1. **Addon Controller**
    - Агрегирует values из AddonValue ресурсов
@@ -121,6 +168,11 @@ spec:
    - Вычисляет rules по состоянию кластера
    - Инъектирует matching selectors в статус Addon
    - Обеспечивает phase-based конфигурацию
+
+3. **AddonClaim Controller** (отдельный бинарник)
+   - Рендерит AddonTemplate в Addon манифест
+   - Создаёт Addon и AddonValue в удалённом infra-кластере
+   - Зеркалирует статус удалённого Addon
 
 ## Status Conditions
 

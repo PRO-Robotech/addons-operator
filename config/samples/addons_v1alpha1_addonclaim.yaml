@@ -1,0 +1,14 @@
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonClaim
+metadata:
+  name: cilium
+  namespace: mock-client
+spec:
+  name: cilium
+  version: v1.17.4
+  cluster: mock-cluster-client
+  credentialRef:
+    name: mock-cluster-infra-kubeconfig
+  templateRef:
+    name: cilium-v1.17.4
+  dependency: true

@@ -9,6 +9,8 @@
 | [Addon](#addon) | Cluster | Основной ресурс для управления Helm развёртываниями |
 | [AddonValue](#addonvalue) | Cluster | Хранит фрагменты Helm values |
 | [AddonPhase](#addonphase) | Cluster | Условная активация селекторов values |
+| [AddonClaim](#addonclaim) | Namespaced | Запрос на развёртывание аддона в удалённом кластере |
+| [AddonTemplate](#addontemplate) | Cluster | Шаблон для генерации Addon из AddonClaim |
 
 ## Addon
 
@@ -319,6 +321,176 @@ spec:
         matchLabels:
           addons.in-cloud.io/addon: my-app
           addons.in-cloud.io/feature.tls: "true"
+```
+
+---
+
+## AddonClaim
+
+`addons.in-cloud.io/v1alpha1`
+
+AddonClaim — namespaced ресурс для запроса развёртывания аддона в удалённом infra-кластере. Контроллер рендерит AddonTemplate с контекстом AddonClaim, создаёт Addon и AddonValue в infra-кластере и зеркалирует обратно статус удалённого Addon.
+
+### AddonClaimSpec
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|-------------|----------|
+| `name` | string | Да | Имя аддона (имя Addon в infra-кластере, 1–253 символа) |
+| `version` | string | Да | Версия аддона (1–64 символа) |
+| `cluster` | string | Да | Имя целевого клиентского кластера (1–253 символа) |
+| `credentialRef` | [CredentialRef](#credentialref) | Да | Ссылка на Secret с kubeconfig infra-кластера |
+| `templateRef` | [TemplateRef](#templateref) | Да | Ссылка на AddonTemplate для рендеринга |
+| `values` | object | Нет | Helm values как JSON объект (произвольная структура) |
+| `valuesString` | string | Нет | Helm values как YAML строка |
+| `dependency` | bool | Нет | Установить аннотацию `dependency.addons.in-cloud.io/enabled` на Addon |
+
+`values` и `valuesString` взаимоисключающие — нельзя указать оба одновременно (CEL validation).
+
+### CredentialRef
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|-------------|----------|
+| `name` | string | Да | Имя Secret в том же namespace, что и AddonClaim. Ключ: `value` |
+
+### TemplateRef
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|-------------|----------|
+| `name` | string | Да | Имя AddonTemplate (cluster-scoped) |
+
+### AddonClaimStatus
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `observedGeneration` | int64 | Последняя обработанная spec.generation |
+| `ready` | bool | Удалённый Addon в состоянии Ready |
+| `deployed` | bool | Удалённый Addon был развёрнут хотя бы один раз |
+| `remoteAddonStatus` | [RemoteAddonStatus](#remoteaddonstatus) | Зеркало статуса Addon из infra-кластера |
+| `conditions` | []Condition | Conditions текущего состояния |
+
+### RemoteAddonStatus
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `deployed` | bool | Addon в infra-кластере был развёрнут |
+| `conditions` | []Condition | Conditions Addon из infra-кластера |
+
+### Status Conditions (AddonClaim)
+
+| Тип | Описание |
+|-----|----------|
+| `Ready` | AddonClaim полностью reconciled, удалённый Addon готов |
+| `Progressing` | Выполняется reconciliation или ожидание готовности |
+| `Degraded` | Произошла ошибка |
+| `TemplateRendered` | AddonTemplate успешно отрендерен в Addon |
+| `RemoteConnected` | Соединение с infra-кластером установлено |
+| `AddonSynced` | Addon и AddonValue синхронизированы в infra-кластер |
+
+### Пример
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonClaim
+metadata:
+  name: cilium
+  namespace: tenant-a
+spec:
+  name: cilium
+  version: v1.17.4
+  cluster: client-cluster-01
+  credentialRef:
+    name: infra-kubeconfig
+  templateRef:
+    name: cilium-v1.17.4
+  dependency: true
+```
+
+### Пример с valuesString
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonClaim
+metadata:
+  name: monitoring
+  namespace: tenant-a
+spec:
+  name: monitoring
+  version: "1.0.0"
+  cluster: client-cluster-01
+  credentialRef:
+    name: infra-kubeconfig
+  templateRef:
+    name: monitoring-v1
+  valuesString: |
+    prometheus:
+      replicas: 2
+    grafana:
+      enabled: true
+```
+
+---
+
+## AddonTemplate
+
+`addons.in-cloud.io/v1alpha1`
+
+AddonTemplate — cluster-scoped ресурс, определяющий переиспользуемый Go template для генерации Addon из AddonClaim. Шаблон рендерится с контекстом AddonClaim и должен давать валидный YAML манифест Addon.
+
+### AddonTemplateSpec
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|-------------|----------|
+| `template` | string | Да | Go template, рендерящийся в YAML манифест Addon (мин. 1 символ) |
+
+### Контекст шаблона
+
+| Путь | Описание |
+|------|----------|
+| `.Values.spec.name` | Имя аддона из AddonClaim |
+| `.Values.spec.version` | Версия аддона |
+| `.Values.spec.cluster` | Имя целевого кластера |
+| `.Values.spec.credentialRef.name` | Имя Secret с kubeconfig |
+| `.Values.spec.templateRef.name` | Имя шаблона |
+| `.Values.metadata.name` | Имя AddonClaim |
+| `.Values.metadata.namespace` | Namespace AddonClaim |
+
+Доступны все функции [Sprig v3](https://masterminds.github.io/sprig/).
+
+### Валидация
+
+Webhook валидирует шаблон при создании и обновлении:
+- `template` не пустой
+- Шаблон парсится без ошибок как Go template
+
+### Пример
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonTemplate
+metadata:
+  name: cilium-v1.17.4
+  labels:
+    name.addons.in-cloud.io: cilium
+    version.addons.in-cloud.io: v1.17.4
+spec:
+  template: |
+    apiVersion: addons.in-cloud.io/v1alpha1
+    kind: Addon
+    metadata:
+      name: {{ .Values.spec.name }}
+    spec:
+      path: "helm-chart-sources/{{ .Values.spec.name }}"
+      pluginName: helm-with-values
+      repoURL: "https://github.com/org/helm-charts"
+      version: "{{ .Values.spec.version }}"
+      releaseName: {{ .Values.spec.name }}
+      targetCluster: "{{ .Values.spec.cluster }}"
+      targetNamespace: "beget-{{ .Values.spec.name }}"
+      backend:
+        type: argocd
+        namespace: argocd
+      variables:
+        cluster_name: "{{ .Values.spec.cluster }}"
 ```
 
 ---

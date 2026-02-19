@@ -90,6 +90,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var gracefulShutdownTimeout time.Duration
+	var pollingInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -110,6 +111,8 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", defaultGracefulShutdownTimeout,
 		"Timeout for graceful shutdown of the manager")
+	flag.DurationVar(&pollingInterval, "polling-interval", addonclaim.DefaultPollingInterval,
+		"Interval between polling remote Addon status")
 	opts := zap.Options{
 		Development: true,
 		// Only add stack traces for panic level logs
@@ -209,9 +212,10 @@ func main() {
 	}
 
 	if err := (&addonclaim.Reconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("addonclaim-controller"),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Recorder:        mgr.GetEventRecorderFor("addonclaim-controller"),
+		PollingInterval: pollingInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AddonClaim")
 		os.Exit(1)

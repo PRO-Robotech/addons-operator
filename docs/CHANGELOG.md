@@ -7,6 +7,28 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- **AddonClaim CRD** — мультикластерное управление аддонами
+  - Namespaced ресурс для запроса развёртывания аддона в удалённом infra-кластере
+  - Поддержка values через JSON объект (`values`) или YAML строку (`valuesString`)
+  - Зависимости через поле `dependency` (устанавливает аннотацию на Addon)
+  - Status conditions: TemplateRendered, RemoteConnected, AddonSynced, Ready, Progressing, Degraded
+  - Зеркалирование статуса удалённого Addon в `status.remoteAddonStatus`
+
+- **AddonTemplate CRD** — шаблоны для генерации Addon из AddonClaim
+  - Cluster-scoped ресурс с Go template для рендеринга Addon YAML
+  - Контекст шаблона: `.Values.spec.*`, `.Values.metadata.*`
+  - Sprig v3 функции доступны в шаблонах
+  - Валидация синтаксиса шаблона через webhook
+
+- **addonclaim-controller** — отдельный бинарник для мультикластерного управления
+  - Флаг `--polling-interval` для настройки интервала опроса удалённого кластера (по умолчанию 15s)
+  - Кэширование remote client'ов по kubeconfig Secret
+  - Автоматическая очистка удалённых ресурсов при удалении AddonClaim (finalizer)
+
+- **Dockerfile.addonclaim** — отдельный Dockerfile для сборки addonclaim-controller
+
 ## [0.2.0] - 2026-02-18
 
 ### Добавлено

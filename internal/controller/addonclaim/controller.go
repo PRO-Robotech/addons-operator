@@ -44,7 +44,7 @@ import (
 )
 
 const (
-	requeueIntervalPolling  = 15 * time.Second
+	DefaultPollingInterval  = 15 * time.Second
 	requeueIntervalDegraded = 60 * time.Second
 	finalizerName           = "addons.in-cloud.io/addonclaim-finalizer"
 	secretKubeconfigKey     = "value"
@@ -71,10 +71,11 @@ const (
 // Reconciler reconciles AddonClaim objects.
 type Reconciler struct {
 	client.Client
-	Scheme        *runtime.Scheme
-	Recorder      record.EventRecorder
-	RemoteClients *remoteclient.Cache
-	Renderer      *Renderer
+	Scheme          *runtime.Scheme
+	Recorder        record.EventRecorder
+	RemoteClients   *remoteclient.Cache
+	Renderer        *Renderer
+	PollingInterval time.Duration
 }
 
 // reconcileContext holds intermediate state passed between reconciliation steps.
@@ -280,7 +281,7 @@ func (r *Reconciler) determineRequeue(ctx context.Context, rctx *reconcileContex
 
 	cm.SetProgressing(ReasonAddonNotReady, pkgconditions.ReasonReconciling, "Waiting for remote Addon to become ready")
 
-	return r.updateStatusAndRequeue(ctx, rctx, requeueIntervalPolling)
+	return r.updateStatusAndRequeue(ctx, rctx, r.pollingInterval())
 }
 
 func (r *Reconciler) reconcileDelete(ctx context.Context, claim *addonsv1alpha1.AddonClaim) (ctrl.Result, error) {
@@ -516,6 +517,14 @@ func (r *Reconciler) doStatusUpdate(ctx context.Context, claim *addonsv1alpha1.A
 	}
 
 	return result, nil
+}
+
+func (r *Reconciler) pollingInterval() time.Duration {
+	if r.PollingInterval > 0 {
+		return r.PollingInterval
+	}
+
+	return DefaultPollingInterval
 }
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {

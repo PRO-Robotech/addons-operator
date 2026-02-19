@@ -298,6 +298,181 @@ INFO  pending watch still unavailable  {"gvk": "cert-manager.io/v1/Certificate"}
 
 **Решение:** Установите CRD (например, cert-manager) — Addon автоматически начнёт отслеживать ресурсы.
 
+## AddonClaim
+
+### 12. SecretNotFound
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: RemoteConnected
+      status: "False"
+      reason: SecretNotFound
+      message: 'Secret "infra-kubeconfig" not found'
+    - type: Degraded
+      status: "True"
+      reason: SecretNotFound
+```
+
+**Причина:** Secret с kubeconfig не найден.
+
+**Решение:**
+1. Secret должен быть в том же namespace, что и AddonClaim:
+   ```bash
+   kubectl get secret infra-kubeconfig -n <addonclaim-namespace>
+   ```
+2. Создайте Secret, если отсутствует:
+   ```bash
+   kubectl create secret generic infra-kubeconfig \
+     --namespace=<addonclaim-namespace> \
+     --from-file=value=/path/to/kubeconfig
+   ```
+
+### 13. SecretInvalid
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: RemoteConnected
+      status: "False"
+      reason: SecretInvalid
+      message: 'Secret "infra-kubeconfig" missing key "value"'
+```
+
+**Причина:** Secret не содержит ключ `value` с kubeconfig.
+
+**Решение:**
+Secret должен содержать ключ `value`:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infra-kubeconfig
+type: Opaque
+data:
+  value: <base64-encoded kubeconfig>
+```
+
+### 14. TemplateNotFound
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: TemplateRendered
+      status: "False"
+      reason: TemplateNotFound
+      message: 'AddonTemplate "cilium-v1.17.4" not found'
+```
+
+**Причина:** AddonTemplate не существует.
+
+**Решение:**
+1. AddonTemplate — cluster-scoped ресурс, namespace не нужен:
+   ```bash
+   kubectl get addontemplate cilium-v1.17.4
+   ```
+2. Создайте AddonTemplate, если отсутствует.
+
+### 15. TemplateRenderFailed
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: TemplateRendered
+      status: "False"
+      reason: TemplateRenderFailed
+      message: "execute template: template: addon-template:3:15: ..."
+```
+
+**Причина:** Ошибка при рендеринге Go template.
+
+**Решение:**
+1. Проверьте синтаксис шаблона:
+   ```bash
+   kubectl get addontemplate <name> -o jsonpath='{.spec.template}'
+   ```
+2. Убедитесь, что используемые переменные существуют в контексте (`.Values.spec.name`, `.Values.spec.version` и т.д.)
+3. При использовании `missingkey=error` все обращения к несуществующим ключам вызовут ошибку.
+
+### 16. RemoteClientFailed
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: RemoteConnected
+      status: "False"
+      reason: RemoteClientFailed
+```
+
+**Причина:** Kubeconfig в Secret невалиден или infra-кластер недоступен.
+
+**Решение:**
+1. Проверьте, что kubeconfig валиден:
+   ```bash
+   kubectl get secret infra-kubeconfig -n <ns> -o jsonpath='{.data.value}' | base64 -d > /tmp/kc.yaml
+   kubectl --kubeconfig=/tmp/kc.yaml cluster-info
+   ```
+2. Проверьте сетевую доступность infra-кластера из system-кластера.
+
+### 17. RemoteOperationFailed
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: AddonSynced
+      status: "False"
+      reason: RemoteOperationFailed
+```
+
+**Причина:** Не удалось создать/обновить ресурсы в infra-кластере.
+
+**Решение:**
+1. Убедитесь, что CRD Addon и AddonValue установлены в infra-кластере:
+   ```bash
+   kubectl --kubeconfig=/path/to/infra-kubeconfig get crd addons.addons.in-cloud.io
+   kubectl --kubeconfig=/path/to/infra-kubeconfig get crd addonvalues.addons.in-cloud.io
+   ```
+2. Проверьте RBAC — ServiceAccount в kubeconfig должен иметь права на создание Addon и AddonValue.
+
+### 18. AddonClaim stuck в Progressing
+
+**Симптом:**
+```yaml
+status:
+  ready: false
+  conditions:
+    - type: Ready
+      status: "False"
+      reason: AddonNotReady
+    - type: Progressing
+      status: "True"
+      reason: Reconciling
+      message: "Waiting for remote Addon to become ready"
+    - type: AddonSynced
+      status: "True"
+      reason: Synced
+```
+
+**Причина:** Addon и AddonValue успешно синхронизированы, но удалённый Addon не переходит в Ready.
+
+**Решение:**
+1. Проверьте статус Addon в infra-кластере:
+   ```bash
+   kubectl --kubeconfig=/path/to/infra-kubeconfig get addon <name> -o yaml
+   ```
+2. Убедитесь, что addons-operator запущен в infra-кластере.
+3. Проверьте, что Argo CD работает в infra-кластере.
+4. Проверьте логи addonclaim-controller:
+   ```bash
+   kubectl logs -n addon-operator-system -l app=addonclaim-controller
+   ```
+
 ## Команды отладки
 
 ### Просмотр всех Addon
@@ -329,6 +504,23 @@ kubectl logs -n addon-operator-system -l app=addon-controller -f
 ```bash
 kubectl get application -n argocd <name> -o yaml
 argocd app get <name>
+```
+
+### Просмотр статуса AddonClaim
+
+```bash
+kubectl get addonclaim -n <namespace>
+kubectl get addonclaim <name> -n <namespace> -o yaml
+```
+
+### Проверка удалённого Addon из AddonClaim
+
+```bash
+# Получить имя аддона
+kubectl get addonclaim <name> -n <namespace> -o jsonpath='{.spec.name}'
+
+# Проверить Addon в infra-кластере
+kubectl --kubeconfig=/path/to/infra-kubeconfig get addon <addon-name> -o yaml
 ```
 
 ### Трассировка разрешения Values
@@ -408,6 +600,9 @@ make run ARGS="--zap-log-level=1"
 ```bash
 # Только логи addon-controller
 kubectl logs -n addon-operator-system -l app=addon-controller | grep "addon-controller"
+
+# Только логи addonclaim-controller
+kubectl logs -n addon-operator-system -l app=addonclaim-controller
 
 # Только логи dynamic watches
 kubectl logs -n addon-operator-system -l app=addon-controller | grep "dynamicwatch"
