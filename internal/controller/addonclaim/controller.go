@@ -171,6 +171,9 @@ func (r *Reconciler) renderAddon(ctx context.Context, rctx *reconcileContext) (c
 
 	cm.SetCondition(TypeTemplateRendered, true, "Rendered", "Template rendered successfully")
 
+	// Override rendered name — Addon name is always determined by claim.Spec.Name
+	addon.Name = claim.Spec.Name
+
 	if claim.Spec.Dependency {
 		if addon.Annotations == nil {
 			addon.Annotations = make(map[string]string)

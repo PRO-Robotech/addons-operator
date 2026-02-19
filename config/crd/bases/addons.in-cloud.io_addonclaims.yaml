@@ -59,11 +59,15 @@ spec:
             description: AddonClaimSpec defines the desired state of an AddonClaim.
             properties:
               cluster:
-                description: Cluster is the target client cluster name (used in template
-                  rendering).
+                description: |-
+                  Cluster is the target client cluster name (used in template rendering).
+                  Immutable after creation.
                 maxLength: 253
                 minLength: 1
                 type: string
+                x-kubernetes-validations:
+                - message: cluster is immutable
+                  rule: self == oldSelf
               credentialRef:
                 description: |-
                   CredentialRef references the Secret containing the infra cluster kubeconfig.
@@ -83,11 +87,15 @@ spec:
                   When true, the annotation dependency.addons.in-cloud.io/enabled is set on the Addon.
                 type: boolean
               name:
-                description: Name is the addon name. Used as the Addon resource name
-                  in the infra cluster.
+                description: |-
+                  Name is the addon name. Used as the Addon resource name in the infra cluster.
+                  Immutable after creation.
                 maxLength: 253
                 minLength: 1
                 type: string
+                x-kubernetes-validations:
+                - message: name is immutable
+                  rule: self == oldSelf
               templateRef:
                 description: TemplateRef references the AddonTemplate to use for rendering.
                 properties:

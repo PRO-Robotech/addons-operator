@@ -25,9 +25,11 @@ import (
 // +kubebuilder:validation:XValidation:rule="!(has(self.values) && size(self.valuesString) > 0)",message="values and valuesString are mutually exclusive"
 type AddonClaimSpec struct {
 	// Name is the addon name. Used as the Addon resource name in the infra cluster.
+	// Immutable after creation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable"
 	Name string `json:"name"`
 
 	// Version is the addon version.
@@ -37,9 +39,11 @@ type AddonClaimSpec struct {
 	Version string `json:"version"`
 
 	// Cluster is the target client cluster name (used in template rendering).
+	// Immutable after creation.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="cluster is immutable"
 	Cluster string `json:"cluster"`
 
 	// CredentialRef references the Secret containing the infra cluster kubeconfig.
