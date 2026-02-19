@@ -40,6 +40,7 @@ import (
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
 	addonctrl "addons-operator/internal/controller/addon"
+	addonclaimctrl "addons-operator/internal/controller/addonclaim"
 	addonphasectrl "addons-operator/internal/controller/addonphase"
 	// +kubebuilder:scaffold:imports
 )
@@ -123,6 +124,12 @@ var _ = BeforeSuite(func() {
 	}
 	_ = k8sClient.Create(ctx, defaultNs) // Ignore error if already exists
 
+	// Create tenant namespace for addonclaim tests
+	tenantNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-test"},
+	}
+	_ = k8sClient.Create(ctx, tenantNs) // Ignore error if already exists
+
 	// Start controller manager
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
@@ -145,6 +152,14 @@ var _ = BeforeSuite(func() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addonphase-controller"),
+	}).SetupWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Setup AddonClaim controller
+	err = (&addonclaimctrl.Reconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("addonclaim-controller"),
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
