@@ -298,6 +298,51 @@ INFO  pending watch still unavailable  {"gvk": "cert-manager.io/v1/Certificate"}
 
 **Решение:** Установите CRD (например, cert-manager) — Addon автоматически начнёт отслеживать ресурсы.
 
+### 11a. Addon долго не удаляется
+
+**Симптом:** Addon находится в состоянии `Terminating` длительное время.
+
+**Причина:** У ArgoCD Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.finalizer: true`). ArgoCD удаляет все managed-ресурсы перед удалением Application, а контроллер Addon ждёт завершения этого процесса.
+
+**Диагностика:**
+```bash
+# Проверить, существует ли Application
+kubectl get application -n argocd <addon-name>
+
+# Посмотреть финализаторы Application
+kubectl get application -n argocd <addon-name> -o jsonpath='{.metadata.finalizers}'
+
+# Логи контроллера
+kubectl logs -n addon-operator-system -l app=addon-controller | grep "Waiting for ArgoCD Application"
+```
+
+**Решение:**
+1. Подождите — ArgoCD удаляет ресурсы, это нормальный процесс
+2. Если Application зависла, проверьте логи ArgoCD:
+   ```bash
+   kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
+   ```
+3. В крайнем случае, удалите финализатор ArgoCD Application вручную:
+   ```bash
+   kubectl patch application -n argocd <name> --type merge \
+     -p '{"metadata":{"finalizers":null}}'
+   ```
+
+### 11b. Невозможно изменить name или cluster в AddonClaim
+
+**Симптом:**
+```
+Error: admission webhook denied the request: name is immutable
+```
+
+**Причина:** Поля `name` и `cluster` в AddonClaim неизменяемы после создания.
+
+**Решение:** Удалите AddonClaim и создайте новый с нужными значениями:
+```bash
+kubectl delete addonclaim <name> -n <namespace>
+kubectl apply -f addonclaim-new.yaml
+```
+
 ## AddonClaim
 
 ### 12. SecretNotFound

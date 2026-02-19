@@ -385,6 +385,31 @@ my-app    my-app    2.0.0     False   true       10m   # был развёрну
 new-app   new-app   1.0.0     False   <none>     30s   # ещё не был развёрнут
 ```
 
+## Удаление Addon
+
+При удалении Addon контроллер выполняет безопасную очистку:
+
+1. Контроллер отправляет запрос на удаление ArgoCD Application
+2. Контроллер **дожидается полного удаления** Application (опрос каждые 5 секунд)
+3. Только после подтверждения удаления Application — снимает финализатор с Addon
+4. Addon удаляется из кластера
+
+Если у Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.finalizer: true`), ArgoCD сначала удалит все managed-ресурсы (Deployments, Services, ConfigMaps и др.), и только потом удалит сам объект Application. Контроллер Addon терпеливо ждёт завершения этого процесса.
+
+### Диагностика
+
+В логах контроллера при ожидании удаления будет:
+
+```
+INFO  Waiting for ArgoCD Application to be fully deleted  {"name": "cilium", "namespace": "argocd"}
+```
+
+После завершения:
+
+```
+INFO  ArgoCD Application deleted  {"name": "cilium", "namespace": "argocd"}
+```
+
 ## Связанные ресурсы
 
 - [AddonValue](addon-value.md) — конфигурационные values

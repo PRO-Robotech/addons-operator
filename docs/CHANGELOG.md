@@ -10,6 +10,8 @@
 ### Добавлено
 
 - **AddonClaim CRD** — мультикластерное управление аддонами
+  - Поля `name` и `cluster` **неизменяемы** после создания (CEL validation `self == oldSelf`)
+  - Имя Addon в infra-кластере всегда определяется `spec.name` AddonClaim, независимо от шаблона
   - Namespaced ресурс для запроса развёртывания аддона в удалённом infra-кластере
   - Поддержка values через JSON объект (`values`) или YAML строку (`valuesString`)
   - Зависимости через поле `dependency` (устанавливает аннотацию на Addon)
@@ -28,6 +30,10 @@
   - Автоматическая очистка удалённых ресурсов при удалении AddonClaim (finalizer)
 
 - **Dockerfile.addonclaim** — отдельный Dockerfile для сборки addonclaim-controller
+
+### Изменено
+
+- **Безопасное удаление Addon** — финализатор Addon теперь дожидается полного удаления ArgoCD Application перед снятием. Если у Application есть собственный финализатор (`resources-finalizer.argocd.argoproj.io`), контроллер опрашивает состояние каждые 5 секунд до завершения очистки. Предотвращает ситуацию, когда Addon удаляется раньше, чем ArgoCD закончит удаление managed-ресурсов.
 
 ## [0.2.0] - 2026-02-18
 
