@@ -83,10 +83,11 @@ func setupWebhooks(mgr ctrl.Manager) error {
 		}
 		setupLog.Info("webhook registered", "webhook", wh.name)
 	}
+
 	return nil
 }
 
-// nolint:gocyclo
+//nolint:gocyclo,funlen // standard kubebuilder main with flag parsing
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
