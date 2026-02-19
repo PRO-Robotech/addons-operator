@@ -110,6 +110,7 @@ func (m *manager) EnsureWatch(ctx context.Context, gvk schema.GroupVersionKind) 
 		m.logger.V(1).Info("incremented watch refCount",
 			"gvk", gvk.String(),
 			"refCount", entry.refCount)
+
 		return nil
 	}
 
@@ -137,8 +138,10 @@ func (m *manager) EnsureWatch(ctx context.Context, gvk schema.GroupVersionKind) 
 			}
 			m.logger.Info("watch pending - CRD not available",
 				"gvk", gvk.String())
+
 			return nil // Graceful degradation
 		}
+
 		return fmt.Errorf("start watch for %s: %w", gvk.String(), err)
 	}
 
@@ -150,6 +153,7 @@ func (m *manager) EnsureWatch(ctx context.Context, gvk schema.GroupVersionKind) 
 	}
 
 	m.logger.Info("watch started", "gvk", gvk.String())
+
 	return nil
 }
 
@@ -161,6 +165,7 @@ func (m *manager) ReleaseWatch(gvk schema.GroupVersionKind) {
 	entry, exists := m.watches[gvk]
 	if !exists {
 		m.logger.V(1).Info("release called for unknown watch", "gvk", gvk.String())
+
 		return
 	}
 
@@ -186,6 +191,7 @@ func (m *manager) GetPendingGVKs() []schema.GroupVersionKind {
 			pending = append(pending, gvk)
 		}
 	}
+
 	return pending
 }
 
@@ -200,6 +206,7 @@ func (m *manager) GetActiveGVKs() []schema.GroupVersionKind {
 			active = append(active, gvk)
 		}
 	}
+
 	return active
 }
 
@@ -207,6 +214,7 @@ func (m *manager) GetActiveGVKs() []schema.GroupVersionKind {
 func (m *manager) GetWatchCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	return len(m.watches)
 }
 
@@ -231,6 +239,7 @@ func (m *manager) RetryPendingWatch(ctx context.Context, gvk schema.GroupVersion
 		if isNotFoundError(err) {
 			return fmt.Errorf("CRD still not available for %s", gvk.String())
 		}
+
 		return fmt.Errorf("start watch for %s: %w", gvk.String(), err)
 	}
 
@@ -240,6 +249,7 @@ func (m *manager) RetryPendingWatch(ctx context.Context, gvk schema.GroupVersion
 	entry.startedAt = time.Now()
 
 	m.logger.Info("pending watch activated", "gvk", gvk.String())
+
 	return nil
 }
 
@@ -251,5 +261,6 @@ func isNotFoundError(err error) bool {
 	}
 	// Check for discovery errors
 	var discErr *discovery.ErrGroupDiscoveryFailed
+
 	return errors.As(err, &discErr)
 }

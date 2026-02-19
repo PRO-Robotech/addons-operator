@@ -29,6 +29,7 @@ func NewGVKSet(gvks ...schema.GroupVersionKind) GVKSet {
 	for _, gvk := range gvks {
 		set[gvk] = struct{}{}
 	}
+
 	return set
 }
 
@@ -40,6 +41,7 @@ func (s GVKSet) Add(gvk schema.GroupVersionKind) {
 // Contains returns true if the set contains the GVK.
 func (s GVKSet) Contains(gvk schema.GroupVersionKind) bool {
 	_, exists := s[gvk]
+
 	return exists
 }
 
@@ -54,6 +56,7 @@ func (s GVKSet) Slice() []schema.GroupVersionKind {
 	for gvk := range s {
 		result = append(result, gvk)
 	}
+
 	return result
 }
 
@@ -65,6 +68,7 @@ func (s GVKSet) Difference(other GVKSet) GVKSet {
 			result[gvk] = struct{}{}
 		}
 	}
+
 	return result
 }
 
@@ -77,6 +81,7 @@ func (s GVKSet) Union(other GVKSet) GVKSet {
 	for gvk := range other {
 		result[gvk] = struct{}{}
 	}
+
 	return result
 }
 
@@ -86,5 +91,6 @@ func (s GVKSet) Copy() GVKSet {
 	for gvk := range s {
 		result[gvk] = struct{}{}
 	}
+
 	return result
 }

@@ -83,6 +83,7 @@ func TestParse(t *testing.T) {
 			err := Parse(tt.path)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)
@@ -178,6 +179,7 @@ func TestExtractString(t *testing.T) {
 			val, found, err := ExtractString(obj, tt.path)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)

@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -173,15 +174,14 @@ func DeepMerge(base, overlay map[string]any) map[string]any {
 	result := make(map[string]any)
 
 	// Copy base values
-	for k, v := range base {
-		result[k] = v
-	}
+	maps.Copy(result, base)
 
 	// Merge overlay values
 	for k, overlayVal := range overlay {
 		baseVal, exists := result[k]
 		if !exists {
 			result[k] = deepCopy(overlayVal)
+
 			continue
 		}
 
@@ -212,12 +212,14 @@ func deepCopy(v any) any {
 		for k, v := range val {
 			result[k] = deepCopy(v)
 		}
+
 		return result
 	case []any:
 		result := make([]any, len(val))
 		for i, v := range val {
 			result[i] = deepCopy(v)
 		}
+
 		return result
 	default:
 		// Scalars are immutable, return as-is
@@ -243,6 +245,7 @@ func ExactMatchAddonLabels(selector, resource map[string]string) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -254,6 +257,7 @@ func FilterAddonLabels(labels map[string]string) map[string]string {
 			result[k] = v
 		}
 	}
+
 	return result
 }
 
@@ -288,12 +292,14 @@ func sortedMap(v any) any {
 		for k, v := range val {
 			result[k] = sortedMap(v)
 		}
+
 		return result
 	case []any:
 		result := make([]any, len(val))
 		for i, v := range val {
 			result[i] = sortedMap(v)
 		}
+
 		return result
 	default:
 		return val

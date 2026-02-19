@@ -319,7 +319,7 @@ func TestResolve_ConcurrentAccess(t *testing.T) {
 	errChan := make(chan error, 100)
 
 	// Spawn 100 goroutines resolving different refs
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -333,6 +333,7 @@ func TestResolve_ConcurrentAccess(t *testing.T) {
 			gvk, err := resolver.Resolve(ref)
 			if err != nil {
 				errChan <- err
+
 				return
 			}
 
@@ -417,15 +418,13 @@ func BenchmarkResolve_CacheHit(b *testing.B) {
 	// Warm up cache
 	_, _ = resolver.Resolve(ref)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = resolver.Resolve(ref)
 	}
 }
 
 func BenchmarkResolve_CacheMiss(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		resolver := NewResolver()
 		ref := addonsv1alpha1.SourceRef{
 			APIVersion: "apps/v1",

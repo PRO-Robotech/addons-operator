@@ -217,6 +217,7 @@ var _ = Describe("AddonPhase Controller", func() {
 						return r.Matched && r.Latched
 					}
 				}
+
 				return false
 			}, timeout, interval).Should(BeTrue())
 

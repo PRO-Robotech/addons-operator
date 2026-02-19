@@ -391,6 +391,7 @@ func TestExtractByPath(t *testing.T) {
 			result, found, err := extractByPath(obj, tt.path)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)
@@ -453,6 +454,7 @@ func TestDecodeValue(t *testing.T) {
 			result, err := decodeValue(tt.value, tt.decode)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)
@@ -524,6 +526,7 @@ func TestSetNestedField(t *testing.T) {
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), "not a map")
+
 				return
 			}
 			require.NoError(t, err)

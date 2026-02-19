@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -84,10 +85,10 @@ func (v *AddonCustomValidator) ValidateDelete(_ context.Context, obj runtime.Obj
 func validateAddon(addon *addonsv1alpha1.Addon) error {
 	// Validate chart/path mutual exclusivity
 	if addon.Spec.Chart == "" && addon.Spec.Path == "" {
-		return fmt.Errorf("either chart or path must be specified")
+		return errors.New("either chart or path must be specified")
 	}
 	if addon.Spec.Chart != "" && addon.Spec.Path != "" {
-		return fmt.Errorf("chart and path are mutually exclusive")
+		return errors.New("chart and path are mutually exclusive")
 	}
 
 	// Validate backend type

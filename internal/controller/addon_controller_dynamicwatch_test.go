@@ -94,6 +94,7 @@ var _ = Describe("Dynamic Watch Integration", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, a); err != nil {
 					return ""
 				}
+
 				return a.Status.ValuesHash
 			}, timeout, interval).ShouldNot(BeEmpty())
 
@@ -322,6 +323,7 @@ var _ = Describe("Dynamic Watch Integration", func() {
 			Eventually(func() bool {
 				a := &addonsv1alpha1.Addon{}
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: addon1Name}, a)
+
 				return err != nil
 			}, timeout, interval).Should(BeTrue())
 
@@ -450,6 +452,7 @@ var _ = Describe("Dynamic Watch Integration", func() {
 					return err
 				}
 				a.Spec.ValuesSources[0].SourceRef.Name = secret2Name
+
 				return k8sClient.Update(ctx, a)
 			}, timeout, interval).Should(Succeed())
 
@@ -460,6 +463,7 @@ var _ = Describe("Dynamic Watch Integration", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, a); err != nil {
 					return 0
 				}
+
 				return a.Status.ObservedGeneration
 			}, timeout, interval).Should(BeNumerically(">=", 2))
 
@@ -554,6 +558,7 @@ var _ = Describe("Dynamic Watch Integration", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, a); err != nil {
 					return ""
 				}
+
 				return a.Status.ValuesHash
 			}, timeout, interval).ShouldNot(BeEmpty())
 

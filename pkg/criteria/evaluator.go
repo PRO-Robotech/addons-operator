@@ -153,6 +153,7 @@ func reasonForExists(path string, found bool) string {
 	if found {
 		return fmt.Sprintf("path %s exists", path)
 	}
+
 	return fmt.Sprintf("path %s does not exist", path)
 }
 
@@ -160,6 +161,7 @@ func reasonForNotExists(path string, found bool) string {
 	if !found {
 		return fmt.Sprintf("path %s does not exist (as expected)", path)
 	}
+
 	return fmt.Sprintf("path %s exists (but should not)", path)
 }
 
@@ -167,5 +169,6 @@ func reasonForComparison(path string, operator Operator, satisfied bool) string 
 	if satisfied {
 		return fmt.Sprintf("path %s %s comparison satisfied", path, operator)
 	}
+
 	return fmt.Sprintf("path %s %s comparison not satisfied", path, operator)
 }

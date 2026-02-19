@@ -37,6 +37,7 @@ func mustYAML(v any) string {
 	if err != nil {
 		panic(err)
 	}
+
 	return string(data)
 }
 
@@ -225,6 +226,7 @@ func TestParseYAML(t *testing.T) {
 			result, err := ParseYAML(tt.input)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)

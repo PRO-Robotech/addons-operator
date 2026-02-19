@@ -18,6 +18,7 @@ package dynamicwatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -52,6 +53,7 @@ func (m *mockController) setWatchError(err error) {
 func (m *mockController) getWatchCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	return m.watchCallCount
 }
 
@@ -59,6 +61,7 @@ func (m *mockController) Watch(src source.TypedSource[reconcile.Request]) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.watchCallCount++
+
 	return m.watchError
 }
 
@@ -84,6 +87,7 @@ func newTestableManager() *testableManager {
 		watches: make(map[schema.GroupVersionKind]*watchEntry),
 		logger:  logr.Discard(),
 	}
+
 	return &testableManager{manager: m}
 }
 
@@ -101,6 +105,7 @@ func (t *testableManager) addWatch(gvk schema.GroupVersionKind, refCount int, ac
 func (t *testableManager) getEntry(gvk schema.GroupVersionKind) *watchEntry {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+
 	return t.watches[gvk]
 }
 
@@ -236,7 +241,7 @@ func TestConcurrentAccess(t *testing.T) {
 	errChan := make(chan error, 200)
 
 	// 100 goroutines incrementing
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -247,7 +252,7 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	// 100 goroutines decrementing
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -278,7 +283,7 @@ func TestIsNotFoundError_NoMatchError(t *testing.T) {
 }
 
 func TestIsNotFoundError_RegularError(t *testing.T) {
-	err := fmt.Errorf("some other error")
+	err := errors.New("some other error")
 
 	assert.False(t, isNotFoundError(err))
 }
@@ -331,9 +336,8 @@ func BenchmarkEnsureWatch_CacheHit(b *testing.B) {
 	tm.addWatch(gvk, 1, true, false)
 
 	ctx := context.Background()
-	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tm.EnsureWatch(ctx, gvk)
 	}
 }
@@ -342,7 +346,7 @@ func BenchmarkGetActiveGVKs(b *testing.B) {
 	tm := newTestableManager()
 
 	// Add 100 watches
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		gvk := schema.GroupVersionKind{
 			Group:   fmt.Sprintf("group%d", i),
 			Version: "v1",
@@ -351,9 +355,7 @@ func BenchmarkGetActiveGVKs(b *testing.B) {
 		tm.addWatch(gvk, 1, i%2 == 0, i%2 != 0)
 	}
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tm.GetActiveGVKs()
 	}
 }
@@ -425,7 +427,7 @@ func TestEnsureWatch_NewGVK_CRDNotAvailable(t *testing.T) {
 
 func TestEnsureWatch_NewGVK_OtherError(t *testing.T) {
 	mockCtrl := newMockController()
-	mockCtrl.setWatchError(fmt.Errorf("some unexpected error"))
+	mockCtrl.setWatchError(errors.New("some unexpected error"))
 
 	mapFunc := func(ctx context.Context, obj *unstructured.Unstructured) []reconcile.Request {
 		return nil
@@ -585,7 +587,7 @@ func TestRetryPendingWatch_OtherError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now a different error occurs
-	mockCtrl.setWatchError(fmt.Errorf("unexpected error"))
+	mockCtrl.setWatchError(errors.New("unexpected error"))
 
 	err = wm.RetryPendingWatch(context.Background(), gvk)
 	require.Error(t, err)

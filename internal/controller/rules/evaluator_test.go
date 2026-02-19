@@ -186,13 +186,13 @@ func TestRuleEvaluator_ExternalSource(t *testing.T) {
 
 	// Create an external resource
 	externalAddon := &unstructured.Unstructured{
-		Object: map[string]interface{}{
+		Object: map[string]any{
 			"apiVersion": "addons.in-cloud.io/v1alpha1",
 			"kind":       "Addon",
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"name": "cert-manager",
 			},
-			"status": map[string]interface{}{
+			"status": map[string]any{
 				"observedGeneration": 1,
 			},
 		},
@@ -949,7 +949,7 @@ func TestHasKeepableCriteria(t *testing.T) {
 func TestCompareValues(t *testing.T) {
 	tests := []struct {
 		name     string
-		actual   interface{}
+		actual   any
 		operator addonsv1alpha1.CriterionOperator
 		expected *apiextensionsv1.JSON
 		found    bool

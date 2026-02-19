@@ -34,5 +34,6 @@ func Parse(path string) error {
 		return fmt.Errorf("path must start with '$': %q", path)
 	}
 	_, err := rfc9535.Parse(path)
+
 	return err
 }

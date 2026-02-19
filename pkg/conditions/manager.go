@@ -135,12 +135,14 @@ func (m *Manager) SetCondition(condType string, status bool, reason, message str
 // IsConditionTrue returns true if the condition exists and has Status=True.
 func (m *Manager) IsConditionTrue(condType string) bool {
 	cond := meta.FindStatusCondition(*m.conditions, condType)
+
 	return cond != nil && cond.Status == metav1.ConditionTrue
 }
 
 // IsConditionFalse returns true if the condition exists and has Status=False.
 func (m *Manager) IsConditionFalse(condType string) bool {
 	cond := meta.FindStatusCondition(*m.conditions, condType)
+
 	return cond != nil && cond.Status == metav1.ConditionFalse
 }
 
@@ -217,6 +219,7 @@ func (m *Manager) indexOfPrimaryCondition(condType string) int {
 			return i
 		}
 	}
+
 	return -1
 }
 

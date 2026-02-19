@@ -37,6 +37,7 @@ func setupScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	_ = addonsv1alpha1.AddToScheme(scheme)
 	_ = argocdv1alpha1.AddToScheme(scheme)
+
 	return scheme
 }
 
@@ -337,7 +338,7 @@ func TestDependencyChecker_ExistsOperator(t *testing.T) {
 func TestCompareValues(t *testing.T) {
 	tests := []struct {
 		name     string
-		actual   interface{}
+		actual   any
 		operator addonsv1alpha1.CriterionOperator
 		expected *apiextensionsv1.JSON
 		match    bool
@@ -511,7 +512,7 @@ func TestDependencyChecker_WithSource(t *testing.T) {
 	})
 	secret.SetName("my-secret")
 	secret.SetNamespace("default")
-	secret.Object["data"] = map[string]interface{}{
+	secret.Object["data"] = map[string]any{
 		"key": "value",
 	}
 

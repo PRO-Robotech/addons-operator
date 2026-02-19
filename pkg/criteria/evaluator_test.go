@@ -223,6 +223,7 @@ func TestEvaluator_Evaluate(t *testing.T) {
 			result := e.Evaluate(obj, tt.path, tt.operator, tt.expected)
 			if tt.hasError {
 				assert.NotNil(t, result.Error)
+
 				return
 			}
 			assert.Nil(t, result.Error)
@@ -398,8 +399,7 @@ func BenchmarkEvaluator_SimpleField(b *testing.B) {
 	obj := map[string]any{"status": map[string]any{"phase": "Running"}}
 	expected := jsonValueEval(`"Running"`)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		e.Evaluate(obj, "$.status.phase", OperatorEqual, expected)
 	}
 }
@@ -419,8 +419,7 @@ func BenchmarkEvaluator_DeepNesting(b *testing.B) {
 	}
 	expected := jsonValueEval(`"value"`)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		e.Evaluate(obj, "$.a.b.c.d.e", OperatorEqual, expected)
 	}
 }
@@ -437,8 +436,7 @@ func BenchmarkEvaluator_FilterExpression(b *testing.B) {
 	}
 	expected := jsonValueEval(`"True"`)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		e.Evaluate(obj, "$.conditions[?@.type=='Ready'].status", OperatorEqual, expected)
 	}
 }

@@ -65,6 +65,7 @@ func (r *resolver) Resolve(ref addonsv1alpha1.SourceRef) (schema.GroupVersionKin
 	r.mu.RLock()
 	if gvk, ok := r.cache[key]; ok {
 		r.mu.RUnlock()
+
 		return gvk, nil
 	}
 	r.mu.RUnlock()

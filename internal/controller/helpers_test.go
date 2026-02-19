@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,7 @@ var testCounter int64
 // uniqueName generates a unique name for test resources.
 func uniqueName(base string) string {
 	counter := atomic.AddInt64(&testCounter, 1)
+
 	return fmt.Sprintf("%s-%d-%d", base, time.Now().UnixNano()%10000, counter)
 }
 
@@ -96,6 +98,7 @@ func createTestAddon(name string, opts ...AddonOption) *addonsv1alpha1.Addon {
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, addon)).To(Succeed())
+
 	return addon
 }
 
@@ -106,9 +109,7 @@ func createTestAddonValue(name, addonName string, values map[string]any, extraLa
 	labels := map[string]string{
 		"addons.in-cloud.io/addon": addonName,
 	}
-	for k, v := range extraLabels {
-		labels[k] = v
-	}
+	maps.Copy(labels, extraLabels)
 
 	av := &addonsv1alpha1.AddonValue{
 		ObjectMeta: metav1.ObjectMeta{
@@ -121,6 +122,7 @@ func createTestAddonValue(name, addonName string, values map[string]any, extraLa
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, av)).To(Succeed())
+
 	return av
 }
 
@@ -130,6 +132,7 @@ func mustMarshalYAML(v any) []byte {
 	if err != nil {
 		panic(err)
 	}
+
 	return data
 }
 
@@ -147,6 +150,7 @@ func createTestAddonPhase(name string, rules []addonsv1alpha1.PhaseRule) *addons
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, phase)).To(Succeed())
+
 	return phase
 }
 
@@ -163,6 +167,7 @@ func createTestSecret(name, namespace string, data map[string][]byte) *corev1.Se
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, secret)).To(Succeed())
+
 	return secret
 }
 
@@ -179,6 +184,7 @@ func createTestConfigMap(name, namespace string, data map[string]string) *corev1
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, cm)).To(Succeed())
+
 	return cm
 }
 
@@ -197,6 +203,7 @@ func waitForCondition(name string, condType string, status metav1.ConditionStatu
 				return c.Status
 			}
 		}
+
 		return metav1.ConditionUnknown
 	}, timeout, interval).Should(Equal(status))
 }
@@ -214,6 +221,7 @@ func waitForConditionReason(name string, condType string, reason string) {
 				return c.Reason
 			}
 		}
+
 		return ""
 	}, timeout, interval).Should(Equal(reason))
 }
@@ -225,8 +233,10 @@ func waitForApplication(name, namespace string) *argocdv1alpha1.Application {
 	var app *argocdv1alpha1.Application
 	EventuallyWithOffset(1, func() error {
 		app = &argocdv1alpha1.Application{}
+
 		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, app)
 	}, timeout, interval).Should(Succeed())
+
 	return app
 }
 
@@ -237,6 +247,7 @@ func waitForApplicationNotExist(name, namespace string) {
 	EventuallyWithOffset(1, func() bool {
 		app := &argocdv1alpha1.Application{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, app)
+
 		return err != nil
 	}, timeout, interval).Should(BeTrue())
 }
@@ -254,6 +265,7 @@ func waitForPhaseRuleMatched(name, ruleName string, matched bool) {
 				return r.Matched == matched
 			}
 		}
+
 		return !matched // Rule not found, return opposite
 	}, timeout, interval).Should(BeTrue())
 }
@@ -269,6 +281,7 @@ func waitForAddonPhaseValuesSelector(name string, hasSelector bool) {
 		if hasSelector {
 			return len(addon.Status.PhaseValuesSelector) > 0
 		}
+
 		return len(addon.Status.PhaseValuesSelector) == 0
 	}, timeout, interval).Should(BeTrue())
 }
@@ -283,6 +296,7 @@ func getApplicationValues(app *argocdv1alpha1.Application) map[string]any {
 	if err := yaml.Unmarshal([]byte(app.Spec.Source.Helm.Values), &values); err != nil {
 		return nil
 	}
+
 	return values
 }
 
