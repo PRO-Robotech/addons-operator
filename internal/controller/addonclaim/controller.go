@@ -51,7 +51,6 @@ const (
 	addonLabelKey           = "addons.in-cloud.io/addon"
 	valuesLabelKey          = "addons.in-cloud.io/values"
 	valuesLabelValue        = "claim"
-	dependencyAnnotationKey = "dependency.addons.in-cloud.io/enabled"
 
 	// Condition types specific to AddonClaim.
 	TypeTemplateRendered = "TemplateRendered"
@@ -109,7 +108,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	cm := pkgconditions.New(&claim.Status.Conditions, claim.Generation)
 	cm.EnsureAllConditions()
 
-	logger.V(1).Info("Reconciling AddonClaim", "name", claim.Spec.Name, "version", claim.Spec.Version)
+	logger.V(1).Info("Reconciling AddonClaim", "templateRef", claim.Spec.TemplateRef.Name)
 
 	if !claim.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, claim)
@@ -141,7 +140,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // renderAddon fetches the AddonTemplate, renders it with the claim context,
-// and applies the dependency annotation.
+// and overrides the rendered name with spec.addon.name.
 func (r *Reconciler) renderAddon(ctx context.Context, rctx *reconcileContext) (ctrl.Result, error, bool) {
 	claim := rctx.claim
 	cm := rctx.cm
@@ -171,16 +170,8 @@ func (r *Reconciler) renderAddon(ctx context.Context, rctx *reconcileContext) (c
 
 	cm.SetCondition(TypeTemplateRendered, true, "Rendered", "Template rendered successfully")
 
-	// Override rendered name — Addon name is always determined by claim.Spec.Name
-	addon.Name = claim.Spec.Name
-
-	if claim.Spec.Dependency {
-		if addon.Annotations == nil {
-			addon.Annotations = make(map[string]string)
-		}
-		addon.Annotations[dependencyAnnotationKey] = "true"
-	}
-
+	// Override rendered name with the explicit identity from spec.
+	addon.Name = claim.Spec.Addon.Name
 	rctx.addon = addon
 
 	return ctrl.Result{}, nil, false
@@ -246,7 +237,6 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	rc := rctx.remoteClient
 	addon := rctx.addon
 
-	// AddonValue first — so Addon can pick up values on its first reconcile
 	if err := r.reconcileRemoteAddonValue(ctx, rc, claim, addon.Name); err != nil {
 		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
 		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync AddonValue to remote cluster")
@@ -267,6 +257,7 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 
 	cm.SetCondition(TypeAddonSynced, true, "Synced", "Addon and AddonValue synced to remote cluster")
 	r.syncRemoteAddonStatus(ctx, rc, claim, addon.Name)
+	r.syncExternalStatus(claim)
 
 	return ctrl.Result{}, nil, false
 }
@@ -276,7 +267,7 @@ func (r *Reconciler) determineRequeue(ctx context.Context, rctx *reconcileContex
 	claim := rctx.claim
 	cm := rctx.cm
 
-	if claim.Status.Ready {
+	if claim.Status.Ready != nil && *claim.Status.Ready {
 		cm.SetReady(pkgconditions.ReasonFullyReconciled, "Remote Addon is ready")
 
 		return r.updateStatus(ctx, rctx)
@@ -319,6 +310,11 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, claim *addonsv1alpha1.
 }
 
 func (r *Reconciler) deleteRemoteResources(ctx context.Context, claim *addonsv1alpha1.AddonClaim) error {
+	addonName := claim.Spec.Addon.Name
+	if addonName == "" {
+		return nil
+	}
+
 	secret := &corev1.Secret{}
 	secretKey := types.NamespacedName{
 		Namespace: claim.Namespace,
@@ -342,21 +338,38 @@ func (r *Reconciler) deleteRemoteResources(ctx context.Context, claim *addonsv1a
 		return fmt.Errorf("create remote client: %w", err)
 	}
 
-	// Delete Addon first, then AddonValue
+	label := resolveValuesLabel(claim.Spec.ValueLabels)
+
+	return r.deleteRemoteResourcesByName(ctx, rc, addonName, label)
+}
+
+func (r *Reconciler) deleteRemoteResourcesByName(ctx context.Context, rc client.Client, addonName, valuesLabel string) error {
 	remoteAddon := &addonsv1alpha1.Addon{}
-	remoteAddon.Name = claim.Spec.Name
+	remoteAddon.Name = addonName
 	if err := rc.Delete(ctx, remoteAddon); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete remote Addon: %w", err)
 	}
 
-	addonValueName := claim.Spec.Name + "-claim-values"
+	avName := buildAddonValueName(addonName, valuesLabel)
 	remoteValue := &addonsv1alpha1.AddonValue{}
-	remoteValue.Name = addonValueName
+	remoteValue.Name = avName
 	if err := rc.Delete(ctx, remoteValue); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete remote AddonValue: %w", err)
 	}
 
 	return nil
+}
+
+func resolveValuesLabel(label string) string {
+	if label == "" {
+		return valuesLabelValue
+	}
+
+	return label
+}
+
+func buildAddonValueName(addonName, valuesLabel string) string {
+	return addonName + "-" + valuesLabel + "-values"
 }
 
 func (r *Reconciler) ensureFinalizer(ctx context.Context, claim *addonsv1alpha1.AddonClaim) error {
@@ -392,6 +405,7 @@ func (r *Reconciler) reconcileRemoteAddon(ctx context.Context, rc client.Client,
 	}
 
 	existing.Spec = desired.Spec
+	existing.Labels = desired.Labels
 	existing.Annotations = desired.Annotations
 
 	return rc.Update(ctx, existing)
@@ -406,14 +420,15 @@ func (r *Reconciler) reconcileRemoteAddonValue(ctx context.Context, rc client.Cl
 		return nil
 	}
 
-	addonValueName := addonName + "-claim-values"
+	label := resolveValuesLabel(claim.Spec.ValueLabels)
+	avName := buildAddonValueName(addonName, label)
 
 	desired := &addonsv1alpha1.AddonValue{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: addonValueName,
+			Name: avName,
 			Labels: map[string]string{
 				addonLabelKey:  addonName,
-				valuesLabelKey: valuesLabelValue,
+				valuesLabelKey: label,
 			},
 		},
 		Spec: addonsv1alpha1.AddonValueSpec{
@@ -422,7 +437,7 @@ func (r *Reconciler) reconcileRemoteAddonValue(ctx context.Context, rc client.Cl
 	}
 
 	existing := &addonsv1alpha1.AddonValue{}
-	err = rc.Get(ctx, types.NamespacedName{Name: addonValueName}, existing)
+	err = rc.Get(ctx, types.NamespacedName{Name: avName}, existing)
 
 	if apierrors.IsNotFound(err) {
 		return rc.Create(ctx, desired)
@@ -468,12 +483,47 @@ func (r *Reconciler) syncRemoteAddonStatus(ctx context.Context, rc client.Client
 		return
 	}
 
-	claim.Status.Ready = isAddonReady(remoteAddon)
+	ready := isAddonReady(remoteAddon)
+	claim.Status.Ready = &ready
 	claim.Status.Deployed = remoteAddon.Status.Deployed
 	claim.Status.RemoteAddonStatus = &addonsv1alpha1.RemoteAddonStatus{
 		Deployed:   remoteAddon.Status.Deployed,
 		Conditions: remoteAddon.Status.Conditions,
 	}
+}
+
+func (r *Reconciler) syncExternalStatus(claim *addonsv1alpha1.AddonClaim) {
+	annotationType := claim.Annotations["external-status/type"]
+	if annotationType == "" {
+		claim.Status.ExternalManagedControlPlane = nil
+		claim.Status.Initialized = nil
+		claim.Status.Initialization = nil
+		claim.Status.Version = ""
+
+		return
+	}
+
+	trueVal := true
+	claim.Status.ExternalManagedControlPlane = &trueVal
+
+	var initialized bool
+	if claim.Status.RemoteAddonStatus != nil {
+		for _, cond := range claim.Status.RemoteAddonStatus.Conditions {
+			if cond.Type == "Deployed" && cond.Status == metav1.ConditionTrue {
+				initialized = true
+
+				break
+			}
+		}
+	}
+
+	claim.Status.Initialized = &initialized
+	cpInitialized := initialized
+	claim.Status.Initialization = &addonsv1alpha1.Initialization{
+		ControlPlaneInitialized: &cpInitialized,
+	}
+
+	claim.Status.Version = extractVariableString(claim, "version")
 }
 
 func (r *Reconciler) updateStatus(ctx context.Context, rctx *reconcileContext) (ctrl.Result, error) {
@@ -579,4 +629,21 @@ func isAddonReady(addon *addonsv1alpha1.Addon) bool {
 	}
 
 	return false
+}
+
+func extractVariableString(claim *addonsv1alpha1.AddonClaim, key string) string {
+	if claim.Spec.Variables == nil {
+		return ""
+	}
+
+	var vars map[string]any
+	if err := json.Unmarshal(claim.Spec.Variables.Raw, &vars); err != nil {
+		return ""
+	}
+
+	if v, ok := vars[key]; ok {
+		return fmt.Sprintf("%v", v)
+	}
+
+	return ""
 }

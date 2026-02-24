@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
@@ -29,26 +30,27 @@ import (
 func TestRenderer_Render(t *testing.T) {
 	r := NewRenderer()
 
-	t.Run("basic rendering", func(t *testing.T) {
+	t.Run("basic rendering with variables", func(t *testing.T) {
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "cilium", Namespace: "tenant-ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "cilium",
-				Version:       "1.14.5",
-				Cluster:       "my-cluster",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "cilium"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "secret"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "cilium-tpl"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"cilium","version":"1.14.5","cluster":"my-cluster"}`),
+				},
 			},
 		}
 
 		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
 kind: Addon
 metadata:
-  name: {{ .Values.spec.name }}
+  name: {{ index .Values.spec.variables "name" }}
 spec:
   repoURL: https://helm.cilium.io/
-  version: "{{ .Values.spec.version }}"
-  targetCluster: "{{ .Values.spec.cluster }}"
+  version: "{{ index .Values.spec.variables "version" }}"
+  targetCluster: "{{ index .Values.spec.variables "cluster" }}"
   targetNamespace: kube-system
   backend:
     type: argocd
@@ -68,23 +70,24 @@ spec:
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "MyAddon", Namespace: "ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "MyAddon",
-				Version:       "1.0.0",
-				Cluster:       "cluster-1",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"MyAddon","version":"1.0.0","cluster":"cluster-1"}`),
+				},
 			},
 		}
 
 		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
 kind: Addon
 metadata:
-  name: {{ .Values.spec.name | lower }}
+  name: {{ index .Values.spec.variables "name" | lower }}
 spec:
   repoURL: https://example.com
-  version: "{{ .Values.spec.version }}"
-  targetCluster: "{{ .Values.spec.cluster }}"
-  targetNamespace: {{ .Values.spec.name | lower }}-system
+  version: "{{ index .Values.spec.variables "version" }}"
+  targetCluster: "{{ index .Values.spec.variables "cluster" }}"
+  targetNamespace: {{ index .Values.spec.variables "name" | lower }}-system
   backend:
     type: argocd
     namespace: argocd`
@@ -100,11 +103,12 @@ spec:
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "from-meta", Namespace: "meta-ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "ignored",
-				Version:       "2.0.0",
-				Cluster:       "c",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"version":"2.0.0","cluster":"c"}`),
+				},
 			},
 		}
 
@@ -114,8 +118,8 @@ metadata:
   name: {{ .Values.metadata.name }}
 spec:
   repoURL: https://example.com
-  version: "{{ .Values.spec.version }}"
-  targetCluster: "{{ .Values.spec.cluster }}"
+  version: "{{ index .Values.spec.variables "version" }}"
+  targetCluster: "{{ index .Values.spec.variables "cluster" }}"
   targetNamespace: "{{ .Values.metadata.namespace }}"
   backend:
     type: argocd
@@ -128,33 +132,32 @@ spec:
 		assert.Equal(t, "meta-ns", addon.Spec.TargetNamespace)
 	})
 
-	t.Run("conditional with dependency true", func(t *testing.T) {
+	t.Run("conditional with variable dependency true", func(t *testing.T) {
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "dep-addon", Namespace: "ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "dep-addon",
-				Version:       "1.0.0",
-				Cluster:       "c",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
-				Dependency:    true,
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"dep-addon","version":"1.0.0","cluster":"c","dependency":true}`),
+				},
 			},
 		}
 
-		// dependency is omitempty, so use index for safe access
 		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
 kind: Addon
 metadata:
-  name: {{ .Values.spec.name }}
+  name: {{ index .Values.spec.variables "name" }}
 spec:
   repoURL: https://example.com
-  version: "{{ .Values.spec.version }}"
-  targetCluster: "{{ .Values.spec.cluster }}"
+  version: "{{ index .Values.spec.variables "version" }}"
+  targetCluster: "{{ index .Values.spec.variables "cluster" }}"
   targetNamespace: default
   backend:
     type: argocd
     namespace: argocd
-  {{ if index .Values.spec "dependency" }}releaseName: {{ .Values.spec.name }}-dep{{ end }}`
+  {{ if index .Values.spec.variables "dependency" }}releaseName: {{ index .Values.spec.variables "name" }}-dep{{ end }}`
 
 		addon, err := r.Render(tmpl, claim)
 		require.NoError(t, err)
@@ -162,34 +165,32 @@ spec:
 		assert.Equal(t, "dep-addon-dep", addon.Spec.ReleaseName)
 	})
 
-	t.Run("conditional with dependency false", func(t *testing.T) {
+	t.Run("conditional with variable dependency false", func(t *testing.T) {
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "no-dep", Namespace: "ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "no-dep",
-				Version:       "1.0.0",
-				Cluster:       "c",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
-				Dependency:    false,
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"no-dep","version":"1.0.0","cluster":"c","dependency":false}`),
+				},
 			},
 		}
 
-		// dependency=false is zero value, omitempty drops it from JSON;
-		// index returns nil for missing keys instead of erroring
 		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
 kind: Addon
 metadata:
-  name: {{ .Values.spec.name }}
+  name: {{ index .Values.spec.variables "name" }}
 spec:
   repoURL: https://example.com
-  version: "{{ .Values.spec.version }}"
-  targetCluster: "{{ .Values.spec.cluster }}"
+  version: "{{ index .Values.spec.variables "version" }}"
+  targetCluster: "{{ index .Values.spec.variables "cluster" }}"
   targetNamespace: default
   backend:
     type: argocd
     namespace: argocd
-  {{ if index .Values.spec "dependency" }}releaseName: {{ .Values.spec.name }}-dep{{ end }}`
+  {{ if index .Values.spec.variables "dependency" }}releaseName: {{ index .Values.spec.variables "name" }}-dep{{ end }}`
 
 		addon, err := r.Render(tmpl, claim)
 		require.NoError(t, err)
@@ -201,9 +202,7 @@ spec:
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "test",
-				Version:       "1.0.0",
-				Cluster:       "c",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
 			},
@@ -212,7 +211,7 @@ spec:
 		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
 kind: Addon
 metadata:
-  name: {{ .Values.spec.name | unknownFunc }}`
+  name: {{ .Values.metadata.name | unknownFunc }}`
 
 		_, err := r.Render(tmpl, claim)
 		assert.Error(t, err)
@@ -222,9 +221,7 @@ metadata:
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "test",
-				Version:       "1.0.0",
-				Cluster:       "c",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
 			},
@@ -243,9 +240,7 @@ metadata:
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "ns"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "test",
-				Version:       "1.0.0",
-				Cluster:       "c",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
 			},
@@ -261,31 +256,32 @@ metadata:
 		claim := &addonsv1alpha1.AddonClaim{
 			ObjectMeta: metav1.ObjectMeta{Name: "ingress", Namespace: "apps"},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "ingress-nginx",
-				Version:       "4.9.0",
-				Cluster:       "prod-cluster",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "ingress-nginx"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "cred"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "ingress-tpl"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"ingress-nginx","version":"4.9.0","cluster":"prod-cluster"}`),
+				},
 			},
 		}
 
 		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
 kind: Addon
 metadata:
-  name: {{ .Values.spec.name }}
+  name: {{ index .Values.spec.variables "name" }}
 spec:
-  path: "helm-chart-sources/{{ .Values.spec.name }}"
+  path: "helm-chart-sources/{{ index .Values.spec.variables "name" }}"
   repoURL: https://git.example.com/charts.git
   pluginName: helm-with-values
-  releaseName: {{ .Values.spec.name }}
-  version: "{{ .Values.spec.version }}"
-  targetCluster: "{{ .Values.spec.cluster }}"
-  targetNamespace: "beget-{{ .Values.spec.name }}"
+  releaseName: {{ index .Values.spec.variables "name" }}
+  version: "{{ index .Values.spec.variables "version" }}"
+  targetCluster: "{{ index .Values.spec.variables "cluster" }}"
+  targetNamespace: "beget-{{ index .Values.spec.variables "name" }}"
   backend:
     type: argocd
     namespace: argocd
   variables:
-    cluster_name: "{{ .Values.spec.cluster }}"`
+    cluster_name: "{{ index .Values.spec.variables "cluster" }}"`
 
 		addon, err := r.Render(tmpl, claim)
 		require.NoError(t, err)
@@ -299,6 +295,163 @@ spec:
 		assert.Equal(t, "beget-ingress-nginx", addon.Spec.TargetNamespace)
 		assert.Equal(t, "prod-cluster", addon.Spec.Variables["cluster_name"])
 	})
+
+	t.Run("nil variables", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "no-vars", Namespace: "ns"},
+			Spec: addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+			},
+		}
+
+		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: {{ .Values.metadata.name }}
+spec:
+  repoURL: https://example.com
+  version: "1.0.0"
+  targetCluster: in-cluster
+  targetNamespace: default
+  backend:
+    type: argocd
+    namespace: argocd`
+
+		addon, err := r.Render(tmpl, claim)
+		require.NoError(t, err)
+
+		assert.Equal(t, "no-vars", addon.Name)
+	})
+
+	t.Run("vars shortcut access", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "vars-test", Namespace: "ns"},
+			Spec: addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"my-addon","version":"2.0.0","cluster":"prod"}`),
+				},
+			},
+		}
+
+		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: {{ .Vars.name }}
+spec:
+  repoURL: https://example.com
+  version: "{{ .Vars.version }}"
+  targetCluster: "{{ .Vars.cluster }}"
+  targetNamespace: default
+  backend:
+    type: argocd
+    namespace: argocd`
+
+		addon, err := r.Render(tmpl, claim)
+		require.NoError(t, err)
+
+		assert.Equal(t, "my-addon", addon.Name)
+		assert.Equal(t, "2.0.0", addon.Spec.Version)
+		assert.Equal(t, "prod", addon.Spec.TargetCluster)
+	})
+
+	t.Run("vars shortcut with nil variables", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "no-vars-shortcut", Namespace: "ns"},
+			Spec: addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+			},
+		}
+
+		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: {{ .Values.metadata.name }}
+spec:
+  repoURL: https://example.com
+  version: "1.0.0"
+  targetCluster: in-cluster
+  targetNamespace: default
+  backend:
+    type: argocd
+    namespace: argocd`
+
+		addon, err := r.Render(tmpl, claim)
+		require.NoError(t, err)
+		assert.Equal(t, "no-vars-shortcut", addon.Name)
+	})
+
+	t.Run("vars and values coexist", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "coexist-claim", Namespace: "test-ns"},
+			Spec: addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"coexist","version":"3.0.0","cluster":"c"}`),
+				},
+			},
+		}
+
+		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: {{ .Vars.name }}
+spec:
+  repoURL: https://example.com
+  version: "{{ .Vars.version }}"
+  targetCluster: "{{ .Vars.cluster }}"
+  targetNamespace: "{{ .Values.metadata.namespace }}"
+  backend:
+    type: argocd
+    namespace: argocd`
+
+		addon, err := r.Render(tmpl, claim)
+		require.NoError(t, err)
+
+		assert.Equal(t, "coexist", addon.Name)
+		assert.Equal(t, "3.0.0", addon.Spec.Version)
+		assert.Equal(t, "test-ns", addon.Spec.TargetNamespace)
+	})
+
+	t.Run("nested variable values", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			ObjectMeta: metav1.ObjectMeta{Name: "nested", Namespace: "ns"},
+			Spec: addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: "s"},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "t"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"nested-addon","config":{"replicas":3}}`),
+				},
+			},
+		}
+
+		tmpl := `apiVersion: addons.in-cloud.io/v1alpha1
+kind: Addon
+metadata:
+  name: {{ index .Values.spec.variables "name" }}
+spec:
+  repoURL: https://example.com
+  version: "1.0.0"
+  targetCluster: in-cluster
+  targetNamespace: default
+  backend:
+    type: argocd
+    namespace: argocd`
+
+		addon, err := r.Render(tmpl, claim)
+		require.NoError(t, err)
+
+		assert.Equal(t, "nested-addon", addon.Name)
+	})
 }
 
 func TestParseTemplate(t *testing.T) {
@@ -309,12 +462,12 @@ func TestParseTemplate(t *testing.T) {
 	}{
 		{
 			name:    "valid template",
-			input:   "{{ .Values.spec.name }}",
+			input:   "{{ .Values.metadata.name }}",
 			wantErr: false,
 		},
 		{
 			name:    "invalid template",
-			input:   "{{ .Values.spec.name | badFunc }}",
+			input:   "{{ .Values.metadata.name | badFunc }}",
 			wantErr: true,
 		},
 		{
@@ -324,7 +477,7 @@ func TestParseTemplate(t *testing.T) {
 		},
 		{
 			name:    "template with sprig",
-			input:   "{{ .Values.spec.name | upper }}",
+			input:   "{{ .Values.metadata.name | upper }}",
 			wantErr: false,
 		},
 	}

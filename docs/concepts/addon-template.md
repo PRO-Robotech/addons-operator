@@ -18,17 +18,31 @@ AddonTemplate:
 
 ## Контекст шаблона
 
-Шаблон получает AddonClaim как контекст через `.Values`:
+Шаблон получает AddonClaim как контекст. Доступны два способа доступа к данным:
+
+### `.Vars` — быстрый доступ к переменным (рекомендуется)
 
 | Путь | Описание | Пример |
 |------|----------|--------|
-| `.Values.spec.name` | Имя аддона | `cilium` |
-| `.Values.spec.version` | Версия аддона | `v1.17.4` |
-| `.Values.spec.cluster` | Имя целевого кластера | `client-cluster-01` |
+| `.Vars.<key>` | Любая переменная из `spec.variables` | `.Vars.name` → `cilium` |
+
+### `.Values` — полный доступ к AddonClaim
+
+| Путь | Описание | Пример |
+|------|----------|--------|
+| `.Values.spec.addon.name` | Имя Addon в удалённом кластере | `cilium` |
+| `.Values.spec.variables.<key>` | Переменные (полный путь) | `v1.17.4` |
 | `.Values.spec.credentialRef.name` | Имя Secret | `infra-kubeconfig` |
 | `.Values.spec.templateRef.name` | Имя шаблона | `cilium-v1.17.4` |
 | `.Values.metadata.name` | Имя AddonClaim | `cilium` |
 | `.Values.metadata.namespace` | Namespace AddonClaim | `tenant-a` |
+
+> **Важно:** Поле `metadata.name` в отрендеренном шаблоне всегда переопределяется значением `spec.addon.name` из AddonClaim. Шаблон определяет спецификацию Addon (chart, repo, backend и т.д.), а идентификация задаётся явно.
+
+Для переменных с нестандартными символами в имени используйте `index`:
+```
+{{ index .Values.spec.variables "my-key" }}
+```
 
 ## Доступные функции
 
@@ -57,21 +71,23 @@ spec:
     apiVersion: addons.in-cloud.io/v1alpha1
     kind: Addon
     metadata:
-      name: {{ .Values.spec.name }}
+      name: placeholder  # переопределяется значением spec.addon.name из AddonClaim
     spec:
-      path: "helm-chart-sources/{{ .Values.spec.name }}"
+      path: "helm-chart-sources/{{ .Vars.name }}"
       pluginName: helm-with-values
       repoURL: "https://github.com/org/helm-charts"
-      version: "{{ .Values.spec.version }}"
-      releaseName: {{ .Values.spec.name }}
-      targetCluster: "{{ .Values.spec.cluster }}"
-      targetNamespace: "{{ .Values.spec.name }}-system"
+      version: "{{ .Vars.version }}"
+      releaseName: {{ .Vars.name }}
+      targetCluster: "{{ .Vars.cluster }}"
+      targetNamespace: "{{ .Vars.name }}-system"
       backend:
         type: argocd
         namespace: argocd
       variables:
-        cluster_name: "{{ .Values.spec.cluster }}"
+        cluster_name: "{{ .Vars.cluster }}"
 ```
+
+> **Примечание:** Поле `metadata.name` в шаблоне всегда переопределяется значением `spec.addon.name` из AddonClaim. Шаблон определяет спецификацию Addon, а идентификация (имя) задаётся явно через AddonClaim.
 
 ### С условной логикой
 
@@ -85,12 +101,12 @@ spec:
     apiVersion: addons.in-cloud.io/v1alpha1
     kind: Addon
     metadata:
-      name: {{ .Values.spec.name }}
+      name: placeholder  # переопределяется spec.addon.name
     spec:
       chart: kube-prometheus-stack
       repoURL: https://prometheus-community.github.io/helm-charts
-      version: "{{ .Values.spec.version }}"
-      targetCluster: "{{ .Values.spec.cluster }}"
+      version: "{{ .Vars.version }}"
+      targetCluster: "{{ .Vars.cluster }}"
       targetNamespace: monitoring
       backend:
         type: argocd
@@ -114,13 +130,13 @@ spec:
     apiVersion: addons.in-cloud.io/v1alpha1
     kind: Addon
     metadata:
-      name: {{ .Values.spec.name | lower | replace "_" "-" }}
+      name: placeholder  # переопределяется spec.addon.name
     spec:
-      chart: {{ .Values.spec.name }}
+      chart: {{ .Vars.name }}
       repoURL: https://charts.example.com
-      version: {{ .Values.spec.version | trimPrefix "v" | quote }}
-      targetCluster: {{ .Values.spec.cluster | quote }}
-      targetNamespace: {{ printf "app-%s" .Values.spec.name }}
+      version: {{ .Vars.version | trimPrefix "v" | quote }}
+      targetCluster: {{ .Vars.cluster | quote }}
+      targetNamespace: {{ printf "app-%s" .Vars.name }}
       backend:
         type: argocd
         namespace: argocd

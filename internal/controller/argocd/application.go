@@ -99,7 +99,7 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 		},
 	}
 
-	if addon.Spec.Finalizer != nil && *addon.Spec.Finalizer {
+	if addon.Spec.Backend.Finalizer != nil && *addon.Spec.Backend.Finalizer {
 		app.Finalizers = []string{argocdResourcesFinalizer}
 	}
 

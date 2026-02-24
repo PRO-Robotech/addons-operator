@@ -220,6 +220,11 @@ type BackendSpec struct {
 	// This is useful for fields that are managed by external controllers or mutating webhooks.
 	// +optional
 	IgnoreDifferences []ResourceIgnoreDifferences `json:"ignoreDifferences,omitempty"`
+
+	// Finalizer controls whether Argo CD resource finalizer is set on the Application.
+	// When true, deleting the Application will also delete all resources created by it.
+	// +optional
+	Finalizer *bool `json:"finalizer,omitempty"`
 }
 
 // ResourceIgnoreDifferences defines rules for ignoring differences for specific resources.

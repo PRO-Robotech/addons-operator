@@ -100,11 +100,6 @@ type AddonSpec struct {
 	// Useful for ordered deployment (e.g., cert-manager before its consumers).
 	// +optional
 	InitDependencies []Dependency `json:"initDependencies,omitempty"`
-
-	// Finalizer controls whether Argo CD resource finalizer is set on the Application.
-	// When true, deleting the Application will also delete all resources created by it.
-	// +optional
-	Finalizer *bool `json:"finalizer,omitempty"`
 }
 
 // AddonStatus defines the observed state of an Addon.

@@ -40,11 +40,12 @@ var _ = Describe("AddonClaim Webhook", func() {
 				Namespace: "default",
 			},
 			Spec: addonsv1alpha1.AddonClaimSpec{
-				Name:          "test",
-				Version:       "1.0.0",
-				Cluster:       "test-cluster",
+				Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "test-secret"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "test-template"},
+				Variables: &apiextensionsv1.JSON{
+					Raw: []byte(`{"name":"test","version":"1.0.0","cluster":"test-cluster"}`),
+				},
 			},
 		}
 		validator = AddonClaimCustomValidator{}
@@ -107,6 +108,57 @@ var _ = Describe("AddonClaim Webhook", func() {
 			_, err := validator.ValidateCreate(ctx, obj)
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("Should accept when variables is a valid JSON object", func() {
+			By("setting variables to a valid JSON object")
+			obj.Name = "test-claim-valid-vars"
+			obj.Spec.Variables = &apiextensionsv1.JSON{Raw: []byte(`{"key":"value","nested":{"a":1}}`)}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject when variables is a JSON array", func() {
+			By("setting variables to a JSON array")
+			obj.Name = "test-claim-array-vars"
+			obj.Spec.Variables = &apiextensionsv1.JSON{Raw: []byte(`["a","b"]`)}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("variables must be a JSON object"))
+		})
+
+		It("Should accept when variables is nil", func() {
+			By("leaving variables as nil")
+			obj.Name = "test-claim-nil-vars"
+			obj.Spec.Variables = nil
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should accept valid external-status/type annotation", func() {
+			By("setting valid annotation")
+			obj.Name = "test-claim-valid-ext"
+			obj.Annotations = map[string]string{
+				"external-status/type": "controlplane",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject invalid external-status/type annotation", func() {
+			By("setting unsupported annotation value")
+			obj.Name = "test-claim-invalid-ext"
+			obj.Annotations = map[string]string{
+				"external-status/type": "unknown",
+			}
+
+			_, err := validator.ValidateCreate(ctx, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("unsupported external-status/type"))
+		})
 	})
 
 	Context("When validating AddonClaim update", func() {
@@ -127,6 +179,27 @@ var _ = Describe("AddonClaim Webhook", func() {
 			oldObj := obj.DeepCopy()
 
 			obj.Spec.Values = &apiextensionsv1.JSON{Raw: []byte(`{"updated":"true"}`)}
+
+			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should reject update that changes spec.addon.name", func() {
+			By("changing spec.addon.name")
+			oldObj := obj.DeepCopy()
+
+			obj.Spec.Addon.Name = "different-addon"
+
+			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.addon.name is immutable"))
+		})
+
+		It("Should accept update that keeps spec.addon.name unchanged", func() {
+			By("keeping spec.addon.name the same")
+			oldObj := obj.DeepCopy()
+
+			obj.Spec.TemplateRef.Name = "new-template"
 
 			_, err := validator.ValidateUpdate(ctx, oldObj, obj)
 			Expect(err).NotTo(HaveOccurred())

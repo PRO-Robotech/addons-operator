@@ -65,11 +65,7 @@ Addon:
 
 ### Удаление ресурсов
 
-| Поле | Обязательно | Описание |
-|------|-------------|----------|
-| `finalizer` | Нет | Каскадное удаление ресурсов при удалении Application |
-
-Когда `finalizer: true`, при удалении Addon (и, соответственно, Argo CD Application) все ресурсы, созданные этим Application, будут удалены из кластера. Без этого поля удаляется только сам объект Application.
+Когда `backend.finalizer: true`, при удалении Addon (и, соответственно, Argo CD Application) все ресурсы, созданные этим Application, будут удалены из кластера. Без этого поля удаляется только сам объект Application.
 
 ### Зависимости
 
@@ -94,14 +90,12 @@ spec:
   targetCluster: in-cluster
   targetNamespace: kube-system
 
-  # Каскадное удаление ресурсов при удалении Addon
-  finalizer: true
-
   # Конфигурация Argo CD
   backend:
     type: argocd
     namespace: argocd
     project: infrastructure
+    finalizer: true  # каскадное удаление ресурсов при удалении Addon
     syncPolicy:
       automated:
         prune: true
@@ -394,7 +388,7 @@ new-app   new-app   1.0.0     False   <none>     30s   # ещё не был ра
 3. Только после подтверждения удаления Application — снимает финализатор с Addon
 4. Addon удаляется из кластера
 
-Если у Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.finalizer: true`), ArgoCD сначала удалит все managed-ресурсы (Deployments, Services, ConfigMaps и др.), и только потом удалит сам объект Application. Контроллер Addon терпеливо ждёт завершения этого процесса.
+Если у Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.backend.finalizer: true`), ArgoCD сначала удалит все managed-ресурсы (Deployments, Services, ConfigMaps и др.), и только потом удалит сам объект Application. Контроллер Addon терпеливо ждёт завершения этого процесса.
 
 ### Диагностика
 

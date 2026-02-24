@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -58,14 +59,24 @@ func (v *AddonClaimCustomValidator) ValidateCreate(_ context.Context, obj runtim
 }
 
 // ValidateUpdate validates AddonClaim on update.
-func (v *AddonClaimCustomValidator) ValidateUpdate(_ context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
-	addonclaim, ok := newObj.(*addonsv1alpha1.AddonClaim)
+func (v *AddonClaimCustomValidator) ValidateUpdate(_ context.Context, oldObj, newObj runtime.Object) (admission.Warnings, error) {
+	oldClaim, ok := oldObj.(*addonsv1alpha1.AddonClaim)
+	if !ok {
+		return nil, fmt.Errorf("expected an AddonClaim object for the oldObj but got %T", oldObj)
+	}
+
+	newClaim, ok := newObj.(*addonsv1alpha1.AddonClaim)
 	if !ok {
 		return nil, fmt.Errorf("expected an AddonClaim object for the newObj but got %T", newObj)
 	}
-	addonclaimlog.Info("Validation for AddonClaim upon update", "name", addonclaim.GetName())
+	addonclaimlog.Info("Validation for AddonClaim upon update", "name", newClaim.GetName())
 
-	return nil, validateAddonClaim(addonclaim)
+	if oldClaim.Spec.Addon.Name != newClaim.Spec.Addon.Name {
+		return nil, fmt.Errorf("spec.addon.name is immutable: cannot change from %q to %q",
+			oldClaim.Spec.Addon.Name, newClaim.Spec.Addon.Name)
+	}
+
+	return nil, validateAddonClaim(newClaim)
 }
 
 // ValidateDelete validates AddonClaim on deletion.
@@ -81,9 +92,21 @@ func (v *AddonClaimCustomValidator) ValidateDelete(_ context.Context, obj runtim
 
 // validateAddonClaim performs validation rules for AddonClaim.
 func validateAddonClaim(addonclaim *addonsv1alpha1.AddonClaim) error {
-	// Validate values/valuesString mutual exclusivity
 	if addonclaim.Spec.Values != nil && len(addonclaim.Spec.Values.Raw) > 0 && addonclaim.Spec.ValuesString != "" {
 		return errors.New("values and valuesString are mutually exclusive")
+	}
+
+	if addonclaim.Spec.Variables != nil && len(addonclaim.Spec.Variables.Raw) > 0 {
+		var parsed map[string]any
+		if err := json.Unmarshal(addonclaim.Spec.Variables.Raw, &parsed); err != nil {
+			return fmt.Errorf("variables must be a JSON object: %w", err)
+		}
+	}
+
+	if t, ok := addonclaim.Annotations["external-status/type"]; ok {
+		if t != "controlplane" {
+			return fmt.Errorf("unsupported external-status/type: %q", t)
+		}
 	}
 
 	return nil

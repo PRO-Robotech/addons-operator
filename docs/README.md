@@ -109,13 +109,15 @@ metadata:
   name: cilium
   namespace: tenant-a
 spec:
-  name: cilium
-  version: v1.17.4
-  cluster: client-cluster-01
+  addon:
+    name: cilium                # явная, неизменяемая идентификация Addon
   credentialRef:
     name: infra-kubeconfig
   templateRef:
     name: cilium-v1.17.4
+  variables:
+    version: v1.17.4
+    cluster: client-cluster-01
 ```
 
 ### [AddonTemplate](concepts/addon-template.md)
@@ -132,12 +134,12 @@ spec:
     apiVersion: addons.in-cloud.io/v1alpha1
     kind: Addon
     metadata:
-      name: {{ .Values.spec.name }}
+      name: placeholder  # переопределяется spec.addon.name из AddonClaim
     spec:
       chart: cilium
       repoURL: https://helm.cilium.io
-      version: "{{ .Values.spec.version }}"
-      targetCluster: "{{ .Values.spec.cluster }}"
+      version: "{{ .Vars.version }}"
+      targetCluster: "{{ .Vars.cluster }}"
       targetNamespace: kube-system
       backend:
         type: argocd

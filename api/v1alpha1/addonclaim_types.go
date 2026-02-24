@@ -21,39 +21,41 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// AddonIdentity specifies the identity of the Addon resource
+// created in the remote cluster. Fields are immutable after creation.
+type AddonIdentity struct {
+	// Name of the Addon resource in the remote cluster.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+}
+
 // AddonClaimSpec defines the desired state of an AddonClaim.
 // +kubebuilder:validation:XValidation:rule="!(has(self.values) && size(self.valuesString) > 0)",message="values and valuesString are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="self.addon.name == oldSelf.addon.name",message="spec.addon.name is immutable"
 type AddonClaimSpec struct {
-	// Name is the addon name. Used as the Addon resource name in the infra cluster.
-	// Immutable after creation.
+	// Addon specifies the identity of the remote Addon resource.
+	// The name is required and immutable — it cannot be changed after creation.
+	// The rendered template's metadata.name is overridden by this value.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable"
-	Name string `json:"name"`
+	Addon AddonIdentity `json:"addon"`
 
-	// Version is the addon version.
+	// TemplateRef references the AddonTemplate to use for rendering.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=64
-	Version string `json:"version"`
-
-	// Cluster is the target client cluster name (used in template rendering).
-	// Immutable after creation.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="cluster is immutable"
-	Cluster string `json:"cluster"`
+	TemplateRef TemplateRef `json:"templateRef"`
 
 	// CredentialRef references the Secret containing the infra cluster kubeconfig.
 	// The Secret must have a "value" key with the kubeconfig data.
 	// +kubebuilder:validation:Required
 	CredentialRef CredentialRef `json:"credentialRef"`
 
-	// TemplateRef references the AddonTemplate to use for rendering.
-	// +kubebuilder:validation:Required
-	TemplateRef TemplateRef `json:"templateRef"`
+	// Variables provides arbitrary parameters for template rendering.
+	// Accessible in templates as .Vars.<key> (shortcut) or .Values.spec.variables.<key>.
+	// +optional
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Variables *apiextensionsv1.JSON `json:"variables,omitempty"`
 
 	// Values provides structured Helm values as a JSON object.
 	// Mutually exclusive with ValuesString — only one may be set.
@@ -68,10 +70,12 @@ type AddonClaimSpec struct {
 	// +optional
 	ValuesString string `json:"valuesString,omitempty"`
 
-	// Dependency marks this addon as a dependency for devops tooling.
-	// When true, the annotation dependency.addons.in-cloud.io/enabled is set on the Addon.
+	// ValueLabels overrides the "addons.in-cloud.io/values" label on the generated AddonValue.
+	// Defaults to "claim". Used to match custom valuesSelectors in the rendered Addon.
 	// +optional
-	Dependency bool `json:"dependency,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:default="claim"
+	ValueLabels string `json:"valueLabels,omitempty"`
 }
 
 // CredentialRef references a Secret with cluster credentials.
@@ -98,7 +102,7 @@ type AddonClaimStatus struct {
 
 	// Ready indicates the remote Addon is fully reconciled and healthy.
 	// +optional
-	Ready bool `json:"ready,omitempty"`
+	Ready *bool `json:"ready,omitempty"`
 
 	// Deployed indicates the remote Addon has been deployed at least once.
 	// +optional
@@ -107,6 +111,26 @@ type AddonClaimStatus struct {
 	// RemoteAddonStatus mirrors the status of the Addon in the infra cluster.
 	// +optional
 	RemoteAddonStatus *RemoteAddonStatus `json:"remoteAddonStatus,omitempty"`
+
+	// Initialized indicates the control plane has been initialized (CAPI v1beta1, deprecated).
+	// Reflects the Deployed condition from the remote Addon.
+	// Populated only when annotation "external-status/type" is present.
+	// +optional
+	Initialized *bool `json:"initialized,omitempty"`
+
+	// Initialization contains CAPI v1beta2 initialization status.
+	// +optional
+	Initialization *Initialization `json:"initialization,omitempty"`
+
+	// ExternalManagedControlPlane indicates the control plane is externally managed.
+	// Populated only when annotation "external-status/type" is present.
+	// +optional
+	ExternalManagedControlPlane *bool `json:"externalManagedControlPlane,omitempty"`
+
+	// Version reflects the Kubernetes version from the claim's variables.
+	// Populated only when annotation "external-status/type" is present.
+	// +optional
+	Version string `json:"version,omitempty"`
 
 	// Conditions represent the current state of the AddonClaim.
 	// +listType=map
@@ -126,12 +150,17 @@ type RemoteAddonStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// Initialization contains CAPI v1beta2 initialization status.
+type Initialization struct {
+	// ControlPlaneInitialized indicates the first control plane instance is ready.
+	// +optional
+	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
-// +kubebuilder:printcolumn:name="Addon",type=string,JSONPath=`.spec.name`
-// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
-// +kubebuilder:printcolumn:name="Cluster",type=string,JSONPath=`.spec.cluster`
+// +kubebuilder:printcolumn:name="Addon",type=string,JSONPath=`.spec.addon.name`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

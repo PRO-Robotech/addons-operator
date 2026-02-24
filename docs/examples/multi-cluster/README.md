@@ -19,20 +19,20 @@ spec:
     apiVersion: addons.in-cloud.io/v1alpha1
     kind: Addon
     metadata:
-      name: {{ .Values.spec.name }}
+      name: placeholder  # переопределяется spec.addon.name из AddonClaim
     spec:
-      path: "helm-chart-sources/{{ .Values.spec.name }}"
+      path: "helm-chart-sources/{{ .Vars.name }}"
       pluginName: helm-with-values
       repoURL: "https://github.com/org/helm-charts"
-      version: "{{ .Values.spec.version }}"
-      releaseName: {{ .Values.spec.name }}
-      targetCluster: "{{ .Values.spec.cluster }}"
-      targetNamespace: "beget-{{ .Values.spec.name }}"
+      version: "{{ .Vars.version }}"
+      releaseName: {{ .Vars.name }}
+      targetCluster: "{{ .Vars.cluster }}"
+      targetNamespace: "beget-{{ .Vars.name }}"
       backend:
         type: argocd
         namespace: argocd
       variables:
-        cluster_name: "{{ .Values.spec.cluster }}"
+        cluster_name: "{{ .Vars.cluster }}"
 ```
 
 ### Credential Secret
@@ -48,7 +48,7 @@ data:
   value: <base64-encoded kubeconfig>
 ```
 
-### AddonClaim с dependency
+### AddonClaim (минимальный)
 
 ```yaml
 apiVersion: addons.in-cloud.io/v1alpha1
@@ -57,14 +57,15 @@ metadata:
   name: cilium
   namespace: tenant-a
 spec:
-  name: cilium
-  version: v1.17.4
-  cluster: client-cluster-01
+  addon:
+    name: cilium
   credentialRef:
     name: infra-kubeconfig
   templateRef:
     name: cilium-v1.17.4
-  dependency: true
+  variables:
+    version: v1.17.4
+    cluster: client-cluster-01
 ```
 
 ### AddonClaim с valuesString
@@ -76,19 +77,43 @@ metadata:
   name: monitoring
   namespace: tenant-a
 spec:
-  name: monitoring
-  version: "1.0.0"
-  cluster: client-cluster-01
+  addon:
+    name: monitoring
   credentialRef:
     name: infra-kubeconfig
   templateRef:
     name: monitoring-v1
+  variables:
+    version: "1.0.0"
+    cluster: client-cluster-01
   valuesString: |
     prometheus:
       replicas: 2
       retention: 30d
     grafana:
       enabled: true
+```
+
+### AddonClaim с CAPI интеграцией
+
+```yaml
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonClaim
+metadata:
+  name: k8s-control-plane
+  namespace: tenant-a
+  annotations:
+    external-status/type: controlplane
+spec:
+  addon:
+    name: k8s-cp
+  credentialRef:
+    name: infra-kubeconfig
+  templateRef:
+    name: control-plane-v1
+  variables:
+    version: "1.28.0"
+    cluster: client-cluster-01
 ```
 
 ## Развёртывание
@@ -116,8 +141,8 @@ kubectl apply -f addonclaim.yaml
 ```bash
 # Статус AddonClaim
 kubectl get addonclaim -n tenant-a
-# NAME     ADDON    VERSION    CLUSTER              READY   AGE
-# cilium   cilium   v1.17.4    client-cluster-01    True    5m
+# NAME     ADDON    READY   AGE
+# cilium   cilium   True    5m
 
 # Детальные conditions
 kubectl get addonclaim cilium -n tenant-a -o yaml
@@ -128,11 +153,21 @@ kubectl get addonclaim cilium -n tenant-a -o yaml
 ```bash
 # Addon создан
 kubectl --kubeconfig=/path/to/infra-kubeconfig get addon cilium
-# NAME     CHART   VERSION    READY   DEPLOYED   AGE
-# cilium           v1.17.4    True    true       4m
 
 # AddonValue создан
 kubectl --kubeconfig=/path/to/infra-kubeconfig get addonvalue cilium-claim-values
+```
+
+### CAPI-совместимые поля (при наличии аннотации)
+
+```bash
+# Проверить initialized
+kubectl get addonclaim k8s-control-plane -n tenant-a \
+  -o jsonpath='{.status.initialized}'
+
+# Проверить version
+kubectl get addonclaim k8s-control-plane -n tenant-a \
+  -o jsonpath='{.status.version}'
 ```
 
 ## Cleanup

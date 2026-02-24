@@ -50,6 +50,9 @@ var (
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
 	projectImage = "example.com/addon-operator:v0.0.1"
+
+	// claimImage is the name of the addonclaim-controller image.
+	claimImage = "example.com/addonclaim-controller:v0.0.1"
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -106,12 +109,30 @@ var _ = BeforeSuite(func() {
 
 	By("deploying the controller-manager")
 	Expect(utils.DeployOperator(projectImage)).To(Succeed(), "Failed to deploy the controller-manager")
+
+	By("building the addonclaim-controller image")
+	cmd = exec.Command("make", "docker-build-claim", fmt.Sprintf("IMG_CLAIM=%s", claimImage))
+	_, err = utils.Run(cmd)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the addonclaim-controller image")
+
+	By("loading the addonclaim-controller image on Kind")
+	err = utils.LoadImageToKindClusterWithName(claimImage)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the addonclaim-controller image into Kind")
+
+	By("patching webhook config for e2e")
+	Expect(utils.PatchWebhookConfigForE2E()).To(Succeed(), "Failed to patch webhook configuration")
+
+	By("deploying addonclaim-controller")
+	Expect(utils.DeployAddonClaimController(claimImage)).To(Succeed(), "Failed to deploy addonclaim-controller")
 })
 
 var _ = AfterSuite(func() {
 	By("cleaning up test resources before undeploy")
 	// Force delete all test resources to prevent undeploy from hanging
 	cleanupTestResources()
+
+	By("undeploying the addonclaim-controller")
+	utils.UndeployAddonClaimController()
 
 	By("undeploying the controller-manager")
 	utils.UndeployOperator()
@@ -137,6 +158,7 @@ var _ = AfterSuite(func() {
 func cleanupTestResources() {
 	// First, patch finalizers on all custom resources to prevent hanging
 	patchFinalizers := [][]string{
+		{"kubectl", "get", "addonclaims", "--all-namespaces", "-o", "name"},
 		{"kubectl", "get", "addons", "-o", "name"},
 		{"kubectl", "get", "addonvalues", "-o", "name"},
 		{"kubectl", "get", "addonphases", "-o", "name"},
@@ -161,6 +183,8 @@ func cleanupTestResources() {
 
 	// Delete all test resources with timeout - ignore errors as resources might not exist
 	cmds := [][]string{
+		{"kubectl", "delete", "addonclaims", "--all-namespaces", "--all", "--force", "--grace-period=0", "--wait=false"},
+		{"kubectl", "delete", "addontemplates", "--all", "--force", "--grace-period=0", "--wait=false"},
 		{"kubectl", "delete", "addons", "--all", "--force", "--grace-period=0", "--wait=false"},
 		{"kubectl", "delete", "addonvalues", "--all", "--force", "--grace-period=0", "--wait=false"},
 		{"kubectl", "delete", "addonphases", "--all", "--force", "--grace-period=0", "--wait=false"},

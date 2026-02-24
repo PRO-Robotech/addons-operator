@@ -4,11 +4,12 @@ metadata:
   name: cilium
   namespace: mock-client
 spec:
-  name: cilium
-  version: v1.17.4
-  cluster: mock-cluster-client
-  credentialRef:
-    name: mock-cluster-infra-kubeconfig
+  addon:
+    name: cilium
   templateRef:
     name: cilium-v1.17.4
-  dependency: true
+  credentialRef:
+    name: mock-cluster-infra-kubeconfig
+  variables:
+    version: v1.17.4
+    cluster: mock-cluster-client

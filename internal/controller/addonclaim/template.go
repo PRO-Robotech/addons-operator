@@ -30,8 +30,10 @@ import (
 
 // RenderContext is passed as the data to template.Execute.
 // Templates access claim fields as .Values.spec.name, .Values.metadata.namespace, etc.
+// .Vars provides a shortcut to spec.variables for ergonomic access (e.g., .Vars.foo).
 type RenderContext struct {
 	Values map[string]any
+	Vars   map[string]any
 }
 
 // Renderer renders AddonTemplate templates with AddonClaim context.
@@ -55,7 +57,14 @@ func (r *Renderer) Render(templateStr string, claim *addonsv1alpha1.AddonClaim) 
 		return nil, fmt.Errorf("unmarshal claim to map: %w", err)
 	}
 
-	ctx := RenderContext{Values: claimMap}
+	var vars map[string]any
+	if claim.Spec.Variables != nil && len(claim.Spec.Variables.Raw) > 0 {
+		if err = json.Unmarshal(claim.Spec.Variables.Raw, &vars); err != nil {
+			return nil, fmt.Errorf("unmarshal variables to map: %w", err)
+		}
+	}
+
+	ctx := RenderContext{Values: claimMap, Vars: vars}
 
 	tmpl, err := template.New("addon-template").
 		Option("missingkey=error").

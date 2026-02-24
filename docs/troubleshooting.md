@@ -302,7 +302,7 @@ INFO  pending watch still unavailable  {"gvk": "cert-manager.io/v1/Certificate"}
 
 **Симптом:** Addon находится в состоянии `Terminating` длительное время.
 
-**Причина:** У ArgoCD Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.finalizer: true`). ArgoCD удаляет все managed-ресурсы перед удалением Application, а контроллер Addon ждёт завершения этого процесса.
+**Причина:** У ArgoCD Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.backend.finalizer: true`). ArgoCD удаляет все managed-ресурсы перед удалением Application, а контроллер Addon ждёт завершения этого процесса.
 
 **Диагностика:**
 ```bash
@@ -328,19 +328,80 @@ kubectl logs -n addon-operator-system -l app=addon-controller | grep "Waiting fo
      -p '{"metadata":{"finalizers":null}}'
    ```
 
-### 11b. Невозможно изменить name или cluster в AddonClaim
+### 11b. CAPI поля не появляются в status AddonClaim
+
+**Симптом:** Поля `initialized`, `externalManagedControlPlane`, `version` отсутствуют в status AddonClaim.
+
+**Причина:** CAPI поля заполняются только при наличии аннотации `external-status/type: controlplane`.
+
+**Решение:**
+1. Добавьте аннотацию:
+   ```bash
+   kubectl annotate addonclaim <name> -n <namespace> external-status/type=controlplane
+   ```
+2. Дождитесь следующего reconcile (polling interval, по умолчанию 15s)
+3. Проверьте:
+   ```bash
+   kubectl get addonclaim <name> -n <namespace> -o jsonpath='{.status.initialized}'
+   ```
+
+**Примечание:** Webhook валидирует значение аннотации — единственное допустимое значение `controlplane`.
+
+### 11c. CAPI initialized=false хотя Addon развёрнут
+
+**Симптом:** `status.initialized=false` при `status.deployed=true`.
+
+**Причина:** `initialized` отражает condition `Deployed` из remote Addon (не `Ready`). Condition `Deployed` может отсутствовать или иметь статус `False`.
+
+**Решение:**
+1. Проверьте conditions удалённого Addon:
+   ```bash
+   kubectl get addonclaim <name> -n <namespace> \
+     -o jsonpath='{.status.remoteAddonStatus.conditions}'
+   ```
+2. Убедитесь, что condition `Deployed` имеет `status: "True"`.
+
+### 11d. Невозможно изменить spec.addon.name
 
 **Симптом:**
 ```
-Error: admission webhook denied the request: name is immutable
+Error: admission webhook "vaddonclaim-v1alpha1.kb.io" denied the request:
+spec.addon.name is immutable
 ```
 
-**Причина:** Поля `name` и `cluster` в AddonClaim неизменяемы после создания.
+Или CEL validation:
+```
+The AddonClaim "cilium" is invalid: spec: Invalid value: "object": spec.addon.name is immutable
+```
 
-**Решение:** Удалите AddonClaim и создайте новый с нужными значениями:
-```bash
-kubectl delete addonclaim <name> -n <namespace>
-kubectl apply -f addonclaim-new.yaml
+**Причина:** Поле `spec.addon.name` является **неизменяемым** после создания. Это защита от случайного переименования Addon в удалённом кластере, которое может создать осиротевшие ресурсы.
+
+**Решение:**
+
+Если действительно нужно изменить имя Addon:
+
+1. Удалите AddonClaim (контроллер автоматически удалит старый Addon из infra-кластера):
+   ```bash
+   kubectl delete addonclaim <name> -n <namespace>
+   ```
+2. Создайте новый AddonClaim с нужным `spec.addon.name`:
+   ```yaml
+   spec:
+     addon:
+       name: new-addon-name
+   ```
+
+### 11e. version пуст в CAPI status
+
+**Симптом:** `status.version` пуст при наличии аннотации `external-status/type`.
+
+**Причина:** `version` извлекается из `spec.variables.version`. Если ключ `version` отсутствует в variables — поле остаётся пустым.
+
+**Решение:** Убедитесь, что в `spec.variables` есть ключ `version`:
+```yaml
+spec:
+  variables:
+    version: "1.28.0"
 ```
 
 ## AddonClaim
@@ -440,7 +501,7 @@ status:
    ```bash
    kubectl get addontemplate <name> -o jsonpath='{.spec.template}'
    ```
-2. Убедитесь, что используемые переменные существуют в контексте (`.Values.spec.name`, `.Values.spec.version` и т.д.)
+2. Убедитесь, что используемые переменные существуют в контексте (`.Vars.<key>`, `.Values.spec.variables.<key>`, `.Values.metadata.name` и т.д.)
 3. При использовании `missingkey=error` все обращения к несуществующим ключам вызовут ошибку.
 
 ### 16. RemoteClientFailed
@@ -561,8 +622,8 @@ kubectl get addonclaim <name> -n <namespace> -o yaml
 ### Проверка удалённого Addon из AddonClaim
 
 ```bash
-# Получить имя аддона
-kubectl get addonclaim <name> -n <namespace> -o jsonpath='{.spec.name}'
+# Получить имя аддона из spec (рекомендуется)
+kubectl get addonclaim <name> -n <namespace> -o jsonpath='{.spec.addon.name}'
 
 # Проверить Addon в infra-кластере
 kubectl --kubeconfig=/path/to/infra-kubeconfig get addon <addon-name> -o yaml

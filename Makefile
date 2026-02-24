@@ -1,5 +1,6 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+IMG_CLAIM ?= addonclaim-controller:latest
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -118,6 +119,10 @@ run: manifests generate fmt vet ## Run a controller from your host.
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
+
+.PHONY: docker-build-claim
+docker-build-claim: ## Build docker image with the addonclaim-controller.
+	$(CONTAINER_TOOL) build -t ${IMG_CLAIM} -f Dockerfile.addonclaim .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
