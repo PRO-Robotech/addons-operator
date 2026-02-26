@@ -508,13 +508,7 @@ func (r *Reconciler) syncExternalStatus(claim *addonsv1alpha1.AddonClaim) {
 
 	var initialized bool
 	if claim.Status.RemoteAddonStatus != nil {
-		for _, cond := range claim.Status.RemoteAddonStatus.Conditions {
-			if cond.Type == "Deployed" && cond.Status == metav1.ConditionTrue {
-				initialized = true
-
-				break
-			}
-		}
+		initialized = claim.Status.RemoteAddonStatus.Deployed
 	}
 
 	claim.Status.Initialized = &initialized

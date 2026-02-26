@@ -278,7 +278,7 @@ spec:
 
 | Поле | Описание |
 |------|----------|
-| `status.initialized` | `true` если remote Addon имеет condition `Deployed=True` |
+| `status.initialized` | `true` если remote Addon имеет `status.deployed=true` (latching bool — не сбрасывается) |
 | `status.initialization.controlPlaneInitialized` | Дублирует `initialized` для CAPI v1beta2 |
 | `status.externalManagedControlPlane` | Всегда `true` |
 | `status.version` | Значение из `variables.version` |

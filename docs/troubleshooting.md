@@ -351,15 +351,15 @@ kubectl logs -n addon-operator-system -l app=addon-controller | grep "Waiting fo
 
 **Симптом:** `status.initialized=false` при `status.deployed=true`.
 
-**Причина:** `initialized` отражает condition `Deployed` из remote Addon (не `Ready`). Condition `Deployed` может отсутствовать или иметь статус `False`.
+**Причина:** `initialized` отражает поле `status.deployed` (latching bool) из remote Addon, а не condition `Ready`. Поле `deployed` устанавливается в `true` после первого успешного деплоя и не сбрасывается обратно.
 
 **Решение:**
-1. Проверьте conditions удалённого Addon:
+1. Проверьте поле `deployed` удалённого Addon:
    ```bash
    kubectl get addonclaim <name> -n <namespace> \
-     -o jsonpath='{.status.remoteAddonStatus.conditions}'
+     -o jsonpath='{.status.remoteAddonStatus.deployed}'
    ```
-2. Убедитесь, что condition `Deployed` имеет `status: "True"`.
+2. Убедитесь, что значение `true`.
 
 ### 11d. Невозможно изменить spec.addon.name
 

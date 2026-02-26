@@ -44,9 +44,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:        "Deployed=True sets Initialized=true and Version",
 			annotations: map[string]string{"external-status/type": "control-plane"},
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Conditions: []metav1.Condition{
-					{Type: "Deployed", Status: metav1.ConditionTrue},
-				},
+				Deployed: true,
 			},
 			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
 			wantInitialized:    boolPtr(true),
@@ -58,9 +56,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:        "Deployed=False sets Initialized=false",
 			annotations: map[string]string{"external-status/type": "control-plane"},
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Conditions: []metav1.Condition{
-					{Type: "Deployed", Status: metav1.ConditionFalse},
-				},
+				Deployed: false,
 			},
 			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
 			wantInitialized:    boolPtr(false),
@@ -72,6 +68,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:        "no Deployed condition (only Ready) sets Initialized=false",
 			annotations: map[string]string{"external-status/type": "control-plane"},
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
+				Deployed: false,
 				Conditions: []metav1.Condition{
 					{Type: "Ready", Status: metav1.ConditionTrue},
 				},
@@ -95,7 +92,7 @@ func TestSyncExternalStatus(t *testing.T) {
 		{
 			name:               "without annotation clears all CAPI fields",
 			annotations:        nil,
-			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Conditions: []metav1.Condition{{Type: "Deployed", Status: metav1.ConditionTrue}}},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
 			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
 			wantInitialized:    nil,
 			wantInitialization: nil,
@@ -106,7 +103,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:        "empty annotation value clears all CAPI fields",
 			annotations: map[string]string{"external-status/type": ""},
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Conditions: []metav1.Condition{{Type: "Deployed", Status: metav1.ConditionTrue}},
+				Deployed: true,
 			},
 			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
 			wantInitialized:    nil,
@@ -118,7 +115,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:        "no version variable returns empty Version",
 			annotations: map[string]string{"external-status/type": "control-plane"},
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Conditions: []metav1.Condition{{Type: "Deployed", Status: metav1.ConditionTrue}},
+				Deployed: true,
 			},
 			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"cluster":"prod"}`)},
 			wantInitialized:    boolPtr(true),
@@ -129,7 +126,7 @@ func TestSyncExternalStatus(t *testing.T) {
 		{
 			name:               "nil variables returns empty Version",
 			annotations:        map[string]string{"external-status/type": "control-plane"},
-			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Conditions: []metav1.Condition{{Type: "Deployed", Status: metav1.ConditionTrue}}},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
 			variables:          nil,
 			wantInitialized:    boolPtr(true),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
@@ -186,9 +183,7 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 			Status: addonsv1alpha1.AddonClaimStatus{
 				Ready: boolPtr(true),
 				RemoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-					Conditions: []metav1.Condition{
-						{Type: "Deployed", Status: metav1.ConditionTrue},
-					},
+					Deployed: true,
 				},
 			},
 		}
@@ -246,9 +241,7 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 			Status: addonsv1alpha1.AddonClaimStatus{
 				Ready: boolPtr(false),
 				RemoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-					Conditions: []metav1.Condition{
-						{Type: "Deployed", Status: metav1.ConditionFalse},
-					},
+					Deployed: false,
 				},
 			},
 		}
@@ -298,9 +291,7 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 			},
 			Status: addonsv1alpha1.AddonClaimStatus{
 				RemoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-					Conditions: []metav1.Condition{
-						{Type: "Deployed", Status: metav1.ConditionTrue},
-					},
+					Deployed: true,
 				},
 			},
 		}

@@ -23,7 +23,7 @@
 - **CAPI Control Plane Contract** — интеграция с Cluster API
   - Аннотация `external-status/type: controlplane` активирует CAPI-совместимые поля в status
   - `status.ready` — `*bool` для трёхстороннего статуса (`nil` = неизвестен, `false` = не готов, `true` = готов)
-  - `status.initialized` / `status.initialization.controlPlaneInitialized` — отражают condition `Deployed` из remote Addon
+  - `status.initialized` / `status.initialization.controlPlaneInitialized` — отражают поле `status.deployed` (latching bool) из remote Addon
   - `status.externalManagedControlPlane` — всегда `true` при наличии аннотации
   - `status.version` — извлекается из `spec.variables.version`
   - Поддержка обеих версий CAPI contract: v1beta1 и v1beta2
