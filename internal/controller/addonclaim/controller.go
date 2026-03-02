@@ -517,7 +517,7 @@ func (r *Reconciler) syncExternalStatus(claim *addonsv1alpha1.AddonClaim) {
 		ControlPlaneInitialized: &cpInitialized,
 	}
 
-	claim.Status.Version = extractVariableString(claim, "version")
+	claim.Status.Version = claim.Spec.Version
 }
 
 func (r *Reconciler) updateStatus(ctx context.Context, rctx *reconcileContext) (ctrl.Result, error) {
@@ -623,21 +623,4 @@ func isAddonReady(addon *addonsv1alpha1.Addon) bool {
 	}
 
 	return false
-}
-
-func extractVariableString(claim *addonsv1alpha1.AddonClaim, key string) string {
-	if claim.Spec.Variables == nil {
-		return ""
-	}
-
-	var vars map[string]any
-	if err := json.Unmarshal(claim.Spec.Variables.Raw, &vars); err != nil {
-		return ""
-	}
-
-	if v, ok := vars[key]; ok {
-		return fmt.Sprintf("%v", v)
-	}
-
-	return ""
 }

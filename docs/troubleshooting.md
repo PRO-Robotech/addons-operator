@@ -395,13 +395,12 @@ The AddonClaim "cilium" is invalid: spec: Invalid value: "object": spec.addon.na
 
 **Симптом:** `status.version` пуст при наличии аннотации `external-status/type`.
 
-**Причина:** `version` извлекается из `spec.variables.version`. Если ключ `version` отсутствует в variables — поле остаётся пустым.
+**Причина:** `status.version` копируется из `spec.version`. Если поле `spec.version` не указано — `status.version` остаётся пустым.
 
-**Решение:** Убедитесь, что в `spec.variables` есть ключ `version`:
+**Решение:** Убедитесь, что в AddonClaim указано поле `spec.version`:
 ```yaml
 spec:
-  variables:
-    version: "1.28.0"
+  version: "1.28.0"
 ```
 
 ## AddonClaim

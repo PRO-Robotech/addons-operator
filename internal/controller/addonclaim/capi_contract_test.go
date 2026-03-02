@@ -22,7 +22,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -34,7 +33,7 @@ func TestSyncExternalStatus(t *testing.T) {
 		name               string
 		annotations        map[string]string
 		remoteAddonStatus  *addonsv1alpha1.RemoteAddonStatus
-		variables          *apiextensionsv1.JSON
+		specVersion        string
 		wantInitialized    *bool
 		wantInitialization *addonsv1alpha1.Initialization
 		wantExternalCP     *bool
@@ -46,7 +45,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
 				Deployed: true,
 			},
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(true),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
 			wantExternalCP:     boolPtr(true),
@@ -58,7 +57,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
 				Deployed: false,
 			},
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(false),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(false)},
 			wantExternalCP:     boolPtr(true),
@@ -73,7 +72,7 @@ func TestSyncExternalStatus(t *testing.T) {
 					{Type: "Ready", Status: metav1.ConditionTrue},
 				},
 			},
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(false),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(false)},
 			wantExternalCP:     boolPtr(true),
@@ -83,7 +82,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:               "nil RemoteAddonStatus sets Initialized=false",
 			annotations:        map[string]string{"external-status/type": "control-plane"},
 			remoteAddonStatus:  nil,
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(false),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(false)},
 			wantExternalCP:     boolPtr(true),
@@ -93,7 +92,7 @@ func TestSyncExternalStatus(t *testing.T) {
 			name:               "without annotation clears all CAPI fields",
 			annotations:        nil,
 			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+			specVersion:        "1.28.0",
 			wantInitialized:    nil,
 			wantInitialization: nil,
 			wantExternalCP:     nil,
@@ -105,29 +104,19 @@ func TestSyncExternalStatus(t *testing.T) {
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
 				Deployed: true,
 			},
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+			specVersion:        "1.28.0",
 			wantInitialized:    nil,
 			wantInitialization: nil,
 			wantExternalCP:     nil,
 			wantVersion:        "",
 		},
 		{
-			name:        "no version variable returns empty Version",
+			name:        "spec.version empty returns empty Version",
 			annotations: map[string]string{"external-status/type": "control-plane"},
 			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
 				Deployed: true,
 			},
-			variables:          &apiextensionsv1.JSON{Raw: []byte(`{"cluster":"prod"}`)},
-			wantInitialized:    boolPtr(true),
-			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
-			wantExternalCP:     boolPtr(true),
-			wantVersion:        "",
-		},
-		{
-			name:               "nil variables returns empty Version",
-			annotations:        map[string]string{"external-status/type": "control-plane"},
-			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
-			variables:          nil,
+			specVersion:        "",
 			wantInitialized:    boolPtr(true),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
 			wantExternalCP:     boolPtr(true),
@@ -149,7 +138,7 @@ func TestSyncExternalStatus(t *testing.T) {
 					Addon:         addonsv1alpha1.AddonIdentity{Name: "test-addon"},
 					TemplateRef:   addonsv1alpha1.TemplateRef{Name: "tpl"},
 					CredentialRef: addonsv1alpha1.CredentialRef{Name: "cred"},
-					Variables:     tt.variables,
+					Version:       tt.specVersion,
 				},
 				Status: addonsv1alpha1.AddonClaimStatus{
 					RemoteAddonStatus: tt.remoteAddonStatus,
@@ -178,7 +167,7 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 				Addon:         addonsv1alpha1.AddonIdentity{Name: "capi-addon"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "tpl"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "cred"},
-				Variables:     &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+				Version:       "1.28.0",
 			},
 			Status: addonsv1alpha1.AddonClaimStatus{
 				Ready: boolPtr(true),
@@ -236,7 +225,7 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 				Addon:         addonsv1alpha1.AddonIdentity{Name: "capi-addon-uninit"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "tpl"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "cred"},
-				Variables:     &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+				Version:       "1.28.0",
 			},
 			Status: addonsv1alpha1.AddonClaimStatus{
 				Ready: boolPtr(false),
@@ -287,7 +276,7 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 				Addon:         addonsv1alpha1.AddonIdentity{Name: "capi-addon-no-ann"},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: "tpl"},
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: "cred"},
-				Variables:     &apiextensionsv1.JSON{Raw: []byte(`{"version":"1.28.0"}`)},
+				Version:       "1.28.0",
 			},
 			Status: addonsv1alpha1.AddonClaimStatus{
 				RemoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{

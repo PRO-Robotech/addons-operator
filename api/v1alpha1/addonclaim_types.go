@@ -76,6 +76,12 @@ type AddonClaimSpec struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:default="claim"
 	ValueLabels string `json:"valueLabels,omitempty"`
+
+	// Version specifies the desired version (e.g. Kubernetes version for control plane addons).
+	// Set by CAPI when cloning from a template.
+	// When annotation "external-status/type" is present, copied to status.version.
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 // CredentialRef references a Secret with cluster credentials.
@@ -113,7 +119,7 @@ type AddonClaimStatus struct {
 	RemoteAddonStatus *RemoteAddonStatus `json:"remoteAddonStatus,omitempty"`
 
 	// Initialized indicates the control plane has been initialized (CAPI v1beta1, deprecated).
-	// Reflects the Deployed condition from the remote Addon.
+	// Reflects status.deployed (latching bool) from the remote Addon.
 	// Populated only when annotation "external-status/type" is present.
 	// +optional
 	Initialized *bool `json:"initialized,omitempty"`

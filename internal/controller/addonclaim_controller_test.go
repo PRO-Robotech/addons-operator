@@ -594,6 +594,7 @@ spec:
 				CredentialRef: addonsv1alpha1.CredentialRef{Name: secretName},
 				TemplateRef:   addonsv1alpha1.TemplateRef{Name: templateName},
 				Variables:     makeVariables(addonName, "1.5.0", "ext-cluster"),
+				Version:       "1.5.0",
 			},
 		}
 		Expect(k8sClient.Create(ctx, claim)).To(Succeed())

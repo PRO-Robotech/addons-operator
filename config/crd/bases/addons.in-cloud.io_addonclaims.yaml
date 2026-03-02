@@ -114,6 +114,12 @@ spec:
                   Accessible in templates as .Vars.<key> (shortcut) or .Values.spec.variables.<key>.
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
+              version:
+                description: |-
+                  Version specifies the desired version (e.g. Kubernetes version for control plane addons).
+                  Set by CAPI when cloning from a template.
+                  When annotation "external-status/type" is present, copied to status.version.
+                type: string
             required:
             - addon
             - credentialRef
@@ -207,7 +213,7 @@ spec:
               initialized:
                 description: |-
                   Initialized indicates the control plane has been initialized (CAPI v1beta1, deprecated).
-                  Reflects the Deployed condition from the remote Addon.
+                  Reflects status.deployed (latching bool) from the remote Addon.
                   Populated only when annotation "external-status/type" is present.
                 type: boolean
               observedGeneration:

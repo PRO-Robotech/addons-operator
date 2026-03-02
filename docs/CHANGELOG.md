@@ -16,6 +16,7 @@
   - `spec.variables` — произвольные параметры для рендеринга шаблона (доступны как `.Vars.<key>`)
   - Поддержка values через JSON объект (`values`) или YAML строку (`valuesString`)
   - `spec.valueLabels` — переопределение метки на генерируемом AddonValue (по умолчанию `"claim"`)
+  - `spec.version` — опциональная версия (например, версия Kubernetes для CAPI control plane). При наличии аннотации `external-status/type` копируется в `status.version`
   - Status conditions: TemplateRendered, RemoteConnected, AddonSynced, Ready, Progressing, Degraded
   - Зеркалирование статуса удалённого Addon в `status.remoteAddonStatus`
 
@@ -25,7 +26,7 @@
   - `status.ready` — `*bool` для трёхстороннего статуса (`nil` = неизвестен, `false` = не готов, `true` = готов)
   - `status.initialized` / `status.initialization.controlPlaneInitialized` — отражают поле `status.deployed` (latching bool) из remote Addon
   - `status.externalManagedControlPlane` — всегда `true` при наличии аннотации
-  - `status.version` — извлекается из `spec.variables.version`
+  - `status.version` — копируется из `spec.version`
   - Поддержка обеих версий CAPI contract: v1beta1 и v1beta2
   - Все CAPI bool-поля (включая `ready`) используют `*bool` + `omitempty` для корректной JSON-сериализации (absent vs false)
 
