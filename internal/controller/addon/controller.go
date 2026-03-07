@@ -22,6 +22,7 @@ import (
 	"time"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -97,6 +98,8 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
+	oldStatus := addon.Status.DeepCopy()
+
 	cm := conditions.NewManager(&addon.Status.Conditions, addon.Generation)
 	cm.EnsureAllConditions()
 
@@ -124,7 +127,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetCondition(conditions.TypeReady, false, conditions.ReasonPaused, "Reconciliation is paused")
 		cm.SetCondition(conditions.TypeProgressing, false, conditions.ReasonPaused, "Reconciliation is paused")
 
-		return r.updateStatus(ctx, addon, cm)
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 
 	dependenciesMet, err := r.checkDependencies(ctx, addon)
@@ -133,14 +136,14 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetOperationalCondition(conditions.TypeDependenciesMet, false, "DependencyCheckFailed", err.Error())
 		cm.SetProgressing(conditions.ReasonDependenciesNotMet, conditions.ReasonWaitingForDependency, "Failed to check dependencies")
 
-		return r.updateStatus(ctx, addon, cm)
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 	if !dependenciesMet {
 		logger.V(1).Info("Waiting for dependencies")
 		cm.SetOperationalCondition(conditions.TypeDependenciesMet, false, conditions.ReasonWaitingForDependency, "One or more dependencies are not ready")
 		cm.SetProgressing(conditions.ReasonDependenciesNotMet, conditions.ReasonWaitingForDependency, "Waiting for dependencies")
 
-		return r.updateStatus(ctx, addon, cm)
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 	cm.SetOperationalCondition(conditions.TypeDependenciesMet, true, "AllDependenciesMet", "All dependencies are satisfied")
 
@@ -150,7 +153,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonValueSourceError, err.Error())
 		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonValueSourceError, "Failed to extract values from sources")
 
-		return r.updateStatus(ctx, addon, cm)
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 
 	tmplCtx := sources.TemplateContext{
@@ -164,7 +167,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonTemplateError, err.Error())
 		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonTemplateError, "Failed to aggregate and render AddonValues")
 
-		return r.updateStatus(ctx, addon, cm)
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 
 	previousHash := addon.Status.ValuesHash
@@ -185,7 +188,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			conditions.ReasonWaitingForStableValues,
 			"Waiting for values to stabilize before creating Application")
 
-		return r.updateStatusAndRequeue(ctx, addon, cm, requeueIntervalStabilize)
+		return r.updateStatusAndRequeue(ctx, addon, cm, oldStatus, requeueIntervalStabilize)
 	}
 
 	if err := r.reconcileApplication(ctx, addon, finalValues); err != nil {
@@ -193,7 +196,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetOperationalCondition(conditions.TypeApplicationCreated, false, conditions.ReasonApplicationError, err.Error())
 		cm.SetDegraded(conditions.ReasonApplicationFailed, conditions.ReasonApplicationError, "Failed to create/update ArgoCD Application")
 
-		return r.updateStatus(ctx, addon, cm)
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 	cm.SetOperationalCondition(conditions.TypeApplicationCreated, true, "ApplicationCreated", "Argo CD Application created/updated")
 
@@ -215,7 +218,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetProgressing(conditions.ReasonNotSynced, reason, message)
 	}
 
-	return r.updateStatus(ctx, addon, cm)
+	return r.updateStatus(ctx, addon, cm, oldStatus)
 }
 
 func (r *AddonReconciler) reconcileDelete(ctx context.Context, addon *addonsv1alpha1.Addon) (ctrl.Result, error) {
@@ -439,20 +442,22 @@ func (r *AddonReconciler) translateApplicationStatus(ctx context.Context, addon 
 	return nil
 }
 
-func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager) (ctrl.Result, error) {
+func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager, oldStatus *addonsv1alpha1.AddonStatus) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	addon.Status.ObservedGeneration = addon.Generation
 
-	if err := r.Status().Update(ctx, addon); err != nil {
-		if apierrors.IsConflict(err) {
-			logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
+	if !apiequality.Semantic.DeepEqual(oldStatus, &addon.Status) {
+		if err := r.Status().Update(ctx, addon); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
 
-			return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to update Addon status")
+
+			return ctrl.Result{}, err
 		}
-		logger.Error(err, "Failed to update Addon status")
-
-		return ctrl.Result{}, err
 	}
 
 	if cm.IsDegraded() {
@@ -464,20 +469,22 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 
 // updateStatusAndRequeue updates status and returns a requeue result with the specified interval.
 // This is used when the controller needs to wait before proceeding (e.g., stabilization gate).
-func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, _ *conditions.Manager, interval time.Duration) (ctrl.Result, error) {
+func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, _ *conditions.Manager, oldStatus *addonsv1alpha1.AddonStatus, interval time.Duration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	addon.Status.ObservedGeneration = addon.Generation
 
-	if err := r.Status().Update(ctx, addon); err != nil {
-		if apierrors.IsConflict(err) {
-			logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
+	if !apiequality.Semantic.DeepEqual(oldStatus, &addon.Status) {
+		if err := r.Status().Update(ctx, addon); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
 
-			return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to update Addon status")
+
+			return ctrl.Result{}, err
 		}
-		logger.Error(err, "Failed to update Addon status")
-
-		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: interval}, nil

@@ -1471,6 +1471,51 @@ var _ = Describe("Addon Controller", func() {
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
 		})
 	})
+	Context("No-op reconciliation", func() {
+		It("should not update ResourceVersion after stabilization", func() {
+			name := uniqueName("addon-noop")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created and conditions to stabilize")
+			waitForApplication(name, "argocd")
+			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Capturing ResourceVersion after stabilization")
+			stabilized := &addonsv1alpha1.Addon{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, stabilized)).To(Succeed())
+			rv := stabilized.ResourceVersion
+
+			By("Verifying ResourceVersion stays the same for 3 seconds")
+			Consistently(func() string {
+				a := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, a); err != nil {
+					return ""
+				}
+
+				return a.ResourceVersion
+			}, 3*time.Second, 500*time.Millisecond).Should(Equal(rv))
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
+
 	Context("Large Scale Scenarios", Label("large-scale"), func() {
 		// These tests verify behavior with multiple Addons.
 		// Use "ginkgo --label-filter=large-scale" to run these specifically.
