@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -72,6 +73,8 @@ func (r *AddonPhaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	logger.V(1).Info("Reconciling AddonPhase", "rules", len(phase.Spec.Rules))
 
+	oldStatus := phase.Status.DeepCopy()
+
 	cm := conditions.NewManager(&phase.Status.Conditions, phase.Generation)
 	cm.EnsureAllConditions()
 
@@ -102,15 +105,17 @@ func (r *AddonPhaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		logger.Error(nil, "Failed to evaluate rules", "phase", phase.Name, "reason", err.Error())
 		cm.SetProgressing(conditions.ReasonEvaluationFailed, conditions.ReasonEvaluationFailed, err.Error())
 
-		return r.updateStatusAndRequeue(ctx, phase)
+		return r.updateStatusAndRequeue(ctx, phase, oldStatus)
 	}
 
-	if err := r.patchAddonStatus(ctx, addon, activeSelectors); err != nil {
-		logger.Error(nil, "Failed to patch Addon status", "addon", addon.Name, "reason", err.Error())
-		cm.SetProgressing(conditions.ReasonPatchFailed, conditions.ReasonPatchFailed,
-			"Failed to update Addon with phase selectors")
+	if !selectorsEqual(addon.Status.PhaseValuesSelector, activeSelectors) {
+		if err := r.patchAddonStatus(ctx, addon, activeSelectors); err != nil {
+			logger.Error(nil, "Failed to patch Addon status", "addon", addon.Name, "reason", err.Error())
+			cm.SetProgressing(conditions.ReasonPatchFailed, conditions.ReasonPatchFailed,
+				"Failed to update Addon with phase selectors")
 
-		return r.updateStatusAndRequeue(ctx, phase)
+			return r.updateStatusAndRequeue(ctx, phase, oldStatus)
+		}
 	}
 
 	phase.Status.RuleStatuses = ruleStatuses
@@ -125,10 +130,7 @@ func (r *AddonPhaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	cm.SetReady(conditions.ReasonFullyReconciled,
 		fmt.Sprintf("%d of %d rules active", activeCount, len(ruleStatuses)))
 
-	r.Recorder.Eventf(phase, "Normal", "Reconciled",
-		"Evaluated %d rules, %d active", len(ruleStatuses), activeCount)
-
-	return r.updateStatus(ctx, phase, cm)
+	return r.updateStatus(ctx, phase, cm, oldStatus, activeCount)
 }
 
 func (r *AddonPhaseReconciler) reconcileDelete(ctx context.Context, phase *addonsv1alpha1.AddonPhase) (ctrl.Result, error) {
@@ -219,6 +221,14 @@ func (r *AddonPhaseReconciler) clearAddonStatus(ctx context.Context, name string
 	})
 }
 
+func selectorsEqual(a, b []addonsv1alpha1.ValuesSelector) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+
+	return apiequality.Semantic.DeepEqual(a, b)
+}
+
 func hasNonAddonSources(phase *addonsv1alpha1.AddonPhase) bool {
 	for _, rule := range phase.Spec.Rules {
 		for _, criterion := range rule.Criteria {
@@ -233,19 +243,24 @@ func hasNonAddonSources(phase *addonsv1alpha1.AddonPhase) bool {
 	return false
 }
 
-func (r *AddonPhaseReconciler) updateStatus(ctx context.Context, phase *addonsv1alpha1.AddonPhase, cm *conditions.Manager) (ctrl.Result, error) {
+func (r *AddonPhaseReconciler) updateStatus(ctx context.Context, phase *addonsv1alpha1.AddonPhase, cm *conditions.Manager, oldStatus *addonsv1alpha1.AddonPhaseStatus, activeCount int) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	phase.Status.ObservedGeneration = phase.Generation
 
-	if err := r.Status().Update(ctx, phase); err != nil {
-		if apierrors.IsConflict(err) {
-			logger.Info("Conflict updating AddonPhase status, will retry", "addonphase", phase.Name)
+	if !apiequality.Semantic.DeepEqual(oldStatus, &phase.Status) {
+		if err := r.Status().Update(ctx, phase); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.Info("Conflict updating AddonPhase status, will retry", "addonphase", phase.Name)
 
-			return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to update AddonPhase status")
+
+			return ctrl.Result{}, err
 		}
-		logger.Error(err, "Failed to update AddonPhase status")
 
-		return ctrl.Result{}, err
+		r.Recorder.Eventf(phase, "Normal", "Reconciled",
+			"Evaluated %d rules, %d active", len(phase.Status.RuleStatuses), activeCount)
 	}
 
 	// Requeue only if has non-Addon sources (no watches for them)
@@ -258,7 +273,6 @@ func (r *AddonPhaseReconciler) updateStatus(ctx context.Context, phase *addonsv1
 
 func (r *AddonPhaseReconciler) updateStatusNoRequeue(ctx context.Context, phase *addonsv1alpha1.AddonPhase) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	phase.Status.ObservedGeneration = phase.Generation
 
 	if err := r.Status().Update(ctx, phase); err != nil {
 		if apierrors.IsConflict(err) {
@@ -274,9 +288,13 @@ func (r *AddonPhaseReconciler) updateStatusNoRequeue(ctx context.Context, phase 
 	return ctrl.Result{}, nil
 }
 
-func (r *AddonPhaseReconciler) updateStatusAndRequeue(ctx context.Context, phase *addonsv1alpha1.AddonPhase) (ctrl.Result, error) {
+func (r *AddonPhaseReconciler) updateStatusAndRequeue(ctx context.Context, phase *addonsv1alpha1.AddonPhase, oldStatus *addonsv1alpha1.AddonPhaseStatus) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	phase.Status.ObservedGeneration = phase.Generation
+
+	if apiequality.Semantic.DeepEqual(oldStatus, &phase.Status) {
+		return ctrl.Result{RequeueAfter: phaseRequeueAfter}, nil
+	}
 
 	if err := r.Status().Update(ctx, phase); err != nil {
 		if apierrors.IsConflict(err) {

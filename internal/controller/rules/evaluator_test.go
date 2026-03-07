@@ -19,6 +19,7 @@ package rules
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -593,6 +594,107 @@ func TestRuleEvaluator_InOperator(t *testing.T) {
 	assert.Len(t, ruleStatuses, 1)
 	assert.True(t, ruleStatuses[0].Matched)
 	assert.Len(t, activeSelectors, 1)
+}
+
+func TestRuleEvaluator_LastEvaluatedPreservedWhenStable(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	fixedTime := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name:     "stable-rule",
+					Criteria: nil,
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "default",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "base"},
+					},
+				},
+			},
+		},
+		Status: addonsv1alpha1.AddonPhaseStatus{
+			RuleStatuses: []addonsv1alpha1.RuleStatus{
+				{
+					Name:          "stable-rule",
+					Matched:       true,
+					Latched:       true,
+					Message:       "No conditions",
+					LastEvaluated: fixedTime,
+				},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+	}
+
+	ruleStatuses, _, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.Equal(t, fixedTime, ruleStatuses[0].LastEvaluated,
+		"LastEvaluated should be preserved when outcome is unchanged")
+}
+
+func TestRuleEvaluator_LastEvaluatedUpdatedWhenChanged(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	oldTime := metav1.NewTime(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "changing-rule",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							Keep:     boolPtr(false),
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:        "default",
+						Priority:    10,
+						MatchLabels: map[string]string{"feature": "base"},
+					},
+				},
+			},
+		},
+		Status: addonsv1alpha1.AddonPhaseStatus{
+			RuleStatuses: []addonsv1alpha1.RuleStatus{
+				{
+					Name:          "changing-rule",
+					Matched:       true,
+					Latched:       false,
+					Message:       "All conditions satisfied",
+					LastEvaluated: oldTime,
+				},
+			},
+		},
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 999},
+	}
+
+	ruleStatuses, _, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	assert.NotEqual(t, oldTime, ruleStatuses[0].LastEvaluated,
+		"LastEvaluated should be updated when outcome changes")
+	assert.False(t, ruleStatuses[0].Matched)
 }
 
 func boolPtr(b bool) *bool { return &b }

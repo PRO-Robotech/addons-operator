@@ -61,12 +61,19 @@ func (e *RuleEvaluator) EvaluateRules(
 
 		latched := matched && hasKeepableCriteria(rule)
 
+		lastEvaluated := metav1.Now()
+		if prev.Name != "" && prev.Matched == matched &&
+			prev.Latched == latched &&
+			prev.Message == message {
+			lastEvaluated = prev.LastEvaluated
+		}
+
 		ruleStatuses = append(ruleStatuses, addonsv1alpha1.RuleStatus{
 			Name:          rule.Name,
 			Matched:       matched,
 			Latched:       latched,
 			Message:       message,
-			LastEvaluated: metav1.Now(),
+			LastEvaluated: lastEvaluated,
 		})
 
 		if matched {

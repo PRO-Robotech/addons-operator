@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -223,6 +225,68 @@ var _ = Describe("AddonPhase Controller", func() {
 
 			By("Verifying Addon has phaseValuesSelector")
 			waitForAddonPhaseValuesSelector(name, true)
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
+
+	Context("No-op reconciliation", func() {
+		It("should not update ResourceVersion after stabilization", func() {
+			name := uniqueName("noop-test")
+
+			By("Creating target Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Creating AddonPhase with always-active rule")
+			phase := &addonsv1alpha1.AddonPhase{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{
+						{
+							Name: "always-on",
+							Selector: addonsv1alpha1.ValuesSelector{
+								Name:        "stable-values",
+								Priority:    10,
+								MatchLabels: map[string]string{"stable": "true"},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, phase)).To(Succeed())
+
+			By("Waiting for initial reconciliation to complete")
+			waitForPhaseRuleMatched(name, "always-on", true)
+
+			By("Capturing ResourceVersion after stabilization")
+			stabilized := &addonsv1alpha1.AddonPhase{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(phase), stabilized)).To(Succeed())
+			rv := stabilized.ResourceVersion
+
+			By("Verifying ResourceVersion stays the same for 3 seconds")
+			Consistently(func() string {
+				p := &addonsv1alpha1.AddonPhase{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(phase), p); err != nil {
+					return ""
+				}
+				return p.ResourceVersion
+			}, 3*time.Second, 500*time.Millisecond).Should(Equal(rv))
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
