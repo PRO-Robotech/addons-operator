@@ -204,6 +204,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if cm.IsConditionTrue(conditions.TypeSynced) && cm.IsConditionTrue(conditions.TypeHealthy) {
 		cm.SetReady(conditions.ReasonFullyReconciled, "Addon is fully reconciled and healthy")
 		addon.Status.Deployed = true
+		cm.SetCondition(conditions.TypeDeployed, true, "Deployed", "Addon has been successfully deployed")
 	} else if !cm.IsDegraded() {
 		reason := conditions.ReasonWaitingForSync
 		message := "Waiting for Application to sync"

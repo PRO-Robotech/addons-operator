@@ -51,6 +51,8 @@ const (
 	TypeSynced = "Synced"
 	// TypeHealthy indicates ArgoCD Application is healthy.
 	TypeHealthy = "Healthy"
+	// TypeDeployed indicates the Addon was successfully deployed at least once.
+	TypeDeployed = "Deployed"
 )
 
 // Addon-specific Ready condition reasons.

@@ -267,6 +267,8 @@ func (r *Reconciler) determineRequeue(ctx context.Context, rctx *reconcileContex
 	claim := rctx.claim
 	cm := rctx.cm
 
+	r.mirrorDeployedCondition(claim, cm)
+
 	if claim.Status.Ready != nil && *claim.Status.Ready {
 		cm.SetReady(pkgconditions.ReasonFullyReconciled, "Remote Addon is ready")
 
@@ -489,6 +491,12 @@ func (r *Reconciler) syncRemoteAddonStatus(ctx context.Context, rc client.Client
 	claim.Status.RemoteAddonStatus = &addonsv1alpha1.RemoteAddonStatus{
 		Deployed:   remoteAddon.Status.Deployed,
 		Conditions: remoteAddon.Status.Conditions,
+	}
+}
+
+func (r *Reconciler) mirrorDeployedCondition(claim *addonsv1alpha1.AddonClaim, cm *pkgconditions.Manager) {
+	if claim.Status.Deployed {
+		cm.SetCondition("Deployed", true, "Deployed", "Remote Addon has been successfully deployed")
 	}
 }
 

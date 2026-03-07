@@ -22,10 +22,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	pkgconditions "addons-operator/pkg/conditions"
 )
 
 func TestSyncExternalStatus(t *testing.T) {
@@ -311,6 +313,40 @@ func TestCAPIContractJSONPaths(t *testing.T) {
 		_, found, err = unstructured.NestedBool(status, "initialization", "controlPlaneInitialized")
 		require.NoError(t, err)
 		assert.False(t, found, "status.initialization must be absent without annotation")
+	})
+}
+
+func TestMirrorDeployedCondition(t *testing.T) {
+	t.Run("sets Deployed condition when deployed is true", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			Status: addonsv1alpha1.AddonClaimStatus{
+				Deployed: true,
+			},
+		}
+		cm := pkgconditions.New(&claim.Status.Conditions, 1)
+
+		r := &Reconciler{}
+		r.mirrorDeployedCondition(claim, cm)
+
+		cond := meta.FindStatusCondition(claim.Status.Conditions, "Deployed")
+		require.NotNil(t, cond)
+		assert.Equal(t, metav1.ConditionTrue, cond.Status)
+		assert.Equal(t, "Deployed", cond.Reason)
+	})
+
+	t.Run("does not set Deployed condition when deployed is false", func(t *testing.T) {
+		claim := &addonsv1alpha1.AddonClaim{
+			Status: addonsv1alpha1.AddonClaimStatus{
+				Deployed: false,
+			},
+		}
+		cm := pkgconditions.New(&claim.Status.Conditions, 1)
+
+		r := &Reconciler{}
+		r.mirrorDeployedCondition(claim, cm)
+
+		cond := meta.FindStatusCondition(claim.Status.Conditions, "Deployed")
+		assert.Nil(t, cond)
 	})
 }
 

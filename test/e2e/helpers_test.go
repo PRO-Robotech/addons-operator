@@ -703,6 +703,13 @@ func WithClaimValueLabels(label string) AddonClaimOption {
 	}
 }
 
+// WithClaimVersion sets spec.version on the AddonClaim.
+func WithClaimVersion(version string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		c.Spec.Version = version
+	}
+}
+
 // WithClaimAddon sets the addon identity on the AddonClaim.
 func WithClaimAddon(name string) AddonClaimOption {
 	return func(c *addonsv1alpha1.AddonClaim) {

@@ -376,6 +376,7 @@ var _ = Describe("AddonClaim", Ordered, func() {
 					"name":    claimName,
 					"version": "6.5.0",
 				}),
+				WithClaimVersion("6.5.0"),
 				WithClaimAnnotations(map[string]string{
 					"external-status/type": "controlplane",
 				}),

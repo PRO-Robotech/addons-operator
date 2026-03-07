@@ -1435,6 +1435,14 @@ var _ = Describe("Addon Controller", func() {
 				return current.Status.Deployed
 			}, timeout, interval).Should(BeTrue())
 
+			By("Verifying Deployed condition is set with correct timestamp")
+			waitForCondition(name, conditions.TypeDeployed, metav1.ConditionTrue)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			deployedCond := meta.FindStatusCondition(addon.Status.Conditions, conditions.TypeDeployed)
+			Expect(deployedCond).NotTo(BeNil())
+			Expect(deployedCond.Reason).To(Equal("Deployed"))
+			deployedTime := deployedCond.LastTransitionTime
+
 			By("Setting Application status to Degraded")
 			Eventually(func() error {
 				app := &argocdv1alpha1.Application{}
@@ -1452,6 +1460,12 @@ var _ = Describe("Addon Controller", func() {
 			// After processing, Deployed must still be true
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
 			Expect(addon.Status.Deployed).To(BeTrue())
+
+			By("Verifying Deployed condition timestamp is preserved after status change")
+			currentDeployedCond := meta.FindStatusCondition(addon.Status.Conditions, conditions.TypeDeployed)
+			Expect(currentDeployedCond).NotTo(BeNil())
+			Expect(currentDeployedCond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(currentDeployedCond.LastTransitionTime).To(Equal(deployedTime))
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
