@@ -285,6 +285,7 @@ var _ = Describe("AddonPhase Controller", func() {
 				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(phase), p); err != nil {
 					return ""
 				}
+
 				return p.ResourceVersion
 			}, 3*time.Second, 500*time.Millisecond).Should(Equal(rv))
 
