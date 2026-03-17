@@ -87,5 +87,6 @@ func (t *StatusTranslator) getHealthMessage(app *argocdv1alpha1.Application, def
 	if app.Status.Health.Message != "" {
 		return app.Status.Health.Message
 	}
+
 	return defaultMsg
 }

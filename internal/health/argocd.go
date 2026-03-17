@@ -48,6 +48,7 @@ func CheckArgoCDCRD(reader client.Reader) healthz.Checker {
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("ArgoCD CRD not installed: %s not found", argoCDCRDName)
 			}
+
 			return fmt.Errorf("check ArgoCD CRD: %w", err)
 		}
 

@@ -20,13 +20,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
+	. "github.com/onsi/ginkgo/v2" //nolint:staticcheck
 )
 
 const (
@@ -143,6 +144,7 @@ spec:
 			// Success - clean up test issuer
 			cmd = exec.Command("kubectl", "delete", "clusterissuer", "test-selfsigned-issuer", "--ignore-not-found")
 			_, _ = Run(cmd)
+
 			return nil
 		}
 
@@ -151,7 +153,7 @@ spec:
 		time.Sleep(2 * time.Second)
 	}
 
-	return fmt.Errorf("cert-manager webhook not ready after 60 seconds")
+	return errors.New("cert-manager webhook not ready after 60 seconds")
 }
 
 // IsCertManagerCRDsInstalled checks if any Cert Manager CRDs are installed
@@ -200,6 +202,7 @@ func LoadImageToKindClusterWithName(name string) error {
 	}
 	cmd := exec.Command(kindBinary, kindOptions...)
 	_, err := Run(cmd)
+
 	return err
 }
 
@@ -207,8 +210,8 @@ func LoadImageToKindClusterWithName(name string) error {
 // according to line breakers, and ignores the empty elements in it.
 func GetNonEmptyLines(output string) []string {
 	var res []string
-	elements := strings.Split(output, "\n")
-	for _, element := range elements {
+	elements := strings.SplitSeq(output, "\n")
+	for element := range elements {
 		if element != "" {
 			res = append(res, element)
 		}
@@ -224,6 +227,7 @@ func GetProjectDir() (string, error) {
 		return wd, fmt.Errorf("failed to get current working directory: %w", err)
 	}
 	wd = strings.ReplaceAll(wd, "/test/e2e", "")
+
 	return wd, nil
 }
 
@@ -265,6 +269,7 @@ func InstallArgoCD() error {
 func IsArgoCDInstalled() bool {
 	cmd := exec.Command("kubectl", "get", "crd", "applications.argoproj.io")
 	_, err := Run(cmd)
+
 	return err == nil
 }
 
@@ -303,6 +308,7 @@ func InstallCRDs() error {
 	if err != nil {
 		return fmt.Errorf("failed to install CRDs: %w", err)
 	}
+
 	return nil
 }
 
@@ -324,7 +330,7 @@ func UninstallCRDs() {
 
 // DeployOperator deploys the operator to the cluster using make deploy.
 func DeployOperator(image string) error {
-	cmd := exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", image))
+	cmd := exec.Command("make", "deploy", "IMG="+image)
 	_, err := Run(cmd)
 	if err != nil {
 		return fmt.Errorf("failed to deploy operator: %w", err)
@@ -359,6 +365,7 @@ func waitForWebhookReady() error {
 			_, _ = fmt.Fprintf(GinkgoWriter, "Webhook endpoints ready: %s\n", output)
 			// Give the webhook a moment to fully initialize
 			time.Sleep(2 * time.Second)
+
 			return nil
 		}
 
@@ -366,7 +373,7 @@ func waitForWebhookReady() error {
 		time.Sleep(2 * time.Second)
 	}
 
-	return fmt.Errorf("webhook endpoints not ready after 60 seconds")
+	return errors.New("webhook endpoints not ready after 60 seconds")
 }
 
 // UndeployOperator removes the operator from the cluster using make undeploy.
@@ -385,11 +392,131 @@ func UndeployOperator() {
 	}
 }
 
+// DeployAddonClaimController deploys the addonclaim-controller as a separate Deployment
+// in the addon-operator-system namespace. It reuses the existing ServiceAccount and
+// runs with webhooks disabled.
+func DeployAddonClaimController(image string) error {
+	deployYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: addonclaim-controller-manager
+  namespace: addon-operator-system
+  labels:
+    control-plane: addonclaim-controller-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: addonclaim-controller-manager
+  template:
+    metadata:
+      labels:
+        control-plane: addonclaim-controller-manager
+    spec:
+      serviceAccountName: addon-operator-controller-manager
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: manager
+        image: %s
+        imagePullPolicy: IfNotPresent
+        command:
+        - /manager
+        args:
+        - --health-probe-bind-address=:8082
+        - --metrics-bind-address=0
+        - --polling-interval=5s
+        env:
+        - name: ENABLE_WEBHOOKS
+          value: "false"
+        ports:
+        - containerPort: 8082
+          name: healthz
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8082
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8082
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        runAsNonRoot: true
+`, image)
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(deployYAML)
+	if _, err := Run(cmd); err != nil {
+		return fmt.Errorf("failed to deploy addonclaim-controller: %w", err)
+	}
+
+	// Wait for the deployment to be available
+	cmd = exec.Command("kubectl", "wait", "--for=condition=available",
+		"deployment/addonclaim-controller-manager",
+		"-n", "addon-operator-system",
+		"--timeout=120s")
+	if _, err := Run(cmd); err != nil {
+		return fmt.Errorf("failed waiting for addonclaim-controller: %w", err)
+	}
+
+	return nil
+}
+
+// UndeployAddonClaimController removes the addonclaim-controller Deployment.
+func UndeployAddonClaimController() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "kubectl", "delete", "deployment",
+		"addonclaim-controller-manager", "-n", "addon-operator-system",
+		"--ignore-not-found", "--wait=false")
+	if _, err := Run(cmd); err != nil {
+		if ctx.Err() != context.DeadlineExceeded {
+			warnError(err)
+		}
+	}
+}
+
+// PatchWebhookConfigForE2E removes addonclaim and addontemplate webhook entries
+// from the ValidatingWebhookConfiguration. These webhooks are served by the
+// addonclaim-controller which runs with ENABLE_WEBHOOKS=false in e2e tests.
+// CRD schema validation still works without these webhook entries.
+func PatchWebhookConfigForE2E() error {
+	// Get the VWC name used by the operator
+	vwcName := "addon-operator-validating-webhook-configuration"
+
+	// JSON patch to remove webhooks by index (addonclaim is index 1, addontemplate is index 3).
+	// We remove highest index first to avoid index shifting.
+	patch := `[{"op":"remove","path":"/webhooks/3"},{"op":"remove","path":"/webhooks/1"}]`
+
+	cmd := exec.Command("kubectl", "patch", "validatingwebhookconfiguration", vwcName,
+		"--type=json", "-p", patch)
+	if _, err := Run(cmd); err != nil {
+		return fmt.Errorf("failed to patch webhook configuration: %w", err)
+	}
+
+	return nil
+}
+
 // UncommentCode searches for target in the file and remove the comment prefix
 // of the target content. The target content may span multiple lines.
 func UncommentCode(filename, target, prefix string) error {
-	// false positive
-	// nolint:gosec
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("failed to read file %q: %w", filename, err)
@@ -428,8 +555,6 @@ func UncommentCode(filename, target, prefix string) error {
 		return fmt.Errorf("failed to write to output: %w", err)
 	}
 
-	// false positive
-	// nolint:gosec
 	if err = os.WriteFile(filename, out.Bytes(), 0644); err != nil {
 		return fmt.Errorf("failed to write file %q: %w", filename, err)
 	}

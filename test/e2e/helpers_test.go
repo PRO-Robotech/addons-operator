@@ -23,6 +23,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
 	"time"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
@@ -644,4 +646,148 @@ func (b *CriterionBuilder) WithKeep(keep bool) *CriterionBuilder {
 // Build returns the constructed Criterion.
 func (b *CriterionBuilder) Build() addonsv1alpha1.Criterion {
 	return b.criterion
+}
+
+// =============================================================================
+// AddonClaim / AddonTemplate Helpers
+// =============================================================================
+
+// createTestAddonTemplate creates a cluster-scoped AddonTemplate for testing.
+func createTestAddonTemplate(name, templateStr string) *addonsv1alpha1.AddonTemplate {
+	tmpl := &addonsv1alpha1.AddonTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: addonsv1alpha1.AddonTemplateSpec{
+			Template: templateStr,
+		},
+	}
+	Expect(k8sClient.Create(ctx, tmpl)).To(Succeed(), "Failed to create AddonTemplate %s", name)
+	return tmpl
+}
+
+// AddonClaimOption is a functional option for createTestAddonClaim.
+type AddonClaimOption func(*addonsv1alpha1.AddonClaim)
+
+// WithClaimAnnotations sets annotations on the AddonClaim.
+func WithClaimAnnotations(annotations map[string]string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		if c.Annotations == nil {
+			c.Annotations = make(map[string]string)
+		}
+		for k, v := range annotations {
+			c.Annotations[k] = v
+		}
+	}
+}
+
+// WithClaimVariables sets variables as JSON on the AddonClaim.
+func WithClaimVariables(vars map[string]string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		data := mustMarshal(vars)
+		c.Spec.Variables = &apiextensionsv1.JSON{Raw: data}
+	}
+}
+
+// WithClaimValuesString sets the valuesString field on the AddonClaim.
+func WithClaimValuesString(values string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		c.Spec.ValuesString = values
+	}
+}
+
+// WithClaimValueLabels sets the valueLabels field on the AddonClaim.
+func WithClaimValueLabels(label string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		c.Spec.ValueLabels = label
+	}
+}
+
+// WithClaimVersion sets spec.version on the AddonClaim.
+func WithClaimVersion(version string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		c.Spec.Version = version
+	}
+}
+
+// WithClaimAddon sets the addon identity on the AddonClaim.
+func WithClaimAddon(name string) AddonClaimOption {
+	return func(c *addonsv1alpha1.AddonClaim) {
+		c.Spec.Addon = addonsv1alpha1.AddonIdentity{Name: name}
+	}
+}
+
+// createTestAddonClaim creates a namespaced AddonClaim for testing.
+func createTestAddonClaim(name, namespace, templateRef, credentialRef string, opts ...AddonClaimOption) *addonsv1alpha1.AddonClaim {
+	claim := &addonsv1alpha1.AddonClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: addonsv1alpha1.AddonClaimSpec{
+			TemplateRef:   addonsv1alpha1.TemplateRef{Name: templateRef},
+			CredentialRef: addonsv1alpha1.CredentialRef{Name: credentialRef},
+		},
+	}
+
+	for _, opt := range opts {
+		opt(claim)
+	}
+
+	Expect(k8sClient.Create(ctx, claim)).To(Succeed(), "Failed to create AddonClaim %s/%s", namespace, name)
+	return claim
+}
+
+// getAddonClaim retrieves an AddonClaim by name and namespace.
+func getAddonClaim(name, namespace string) (*addonsv1alpha1.AddonClaim, error) {
+	claim := &addonsv1alpha1.AddonClaim{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, claim)
+	return claim, err
+}
+
+// waitForClaimCondition waits for an AddonClaim condition to have the specified status.
+func waitForClaimCondition(name, namespace, condType string, status metav1.ConditionStatus) {
+	Eventually(func() metav1.ConditionStatus {
+		claim, err := getAddonClaim(name, namespace)
+		if err != nil {
+			return metav1.ConditionUnknown
+		}
+		for _, c := range claim.Status.Conditions {
+			if c.Type == condType {
+				return c.Status
+			}
+		}
+		return metav1.ConditionUnknown
+	}, timeout, interval).Should(Equal(status),
+		"AddonClaim %s/%s condition %s should be %s", namespace, name, condType, status)
+}
+
+// createKubeconfigSecret creates a Secret containing the current cluster's kubeconfig.
+// This produces a self-referencing kubeconfig (the "remote" cluster is the same Kind cluster).
+func createKubeconfigSecret(name, namespace string) *corev1.Secret {
+	// Get kubeconfig from the Kind cluster
+	kindCluster := os.Getenv("KIND_CLUSTER")
+	if kindCluster == "" {
+		kindCluster = "addon-operator-test-e2e"
+	}
+	kindBinary := os.Getenv("KIND")
+	if kindBinary == "" {
+		kindBinary = "kind"
+	}
+
+	cmd := exec.Command(kindBinary, "get", "kubeconfig", "--name", kindCluster, "--internal")
+	kubeconfig, err := cmd.Output()
+	Expect(err).NotTo(HaveOccurred(), "Failed to get kubeconfig from Kind cluster")
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			"value": kubeconfig,
+		},
+	}
+	Expect(k8sClient.Create(ctx, secret)).To(Succeed(), "Failed to create kubeconfig Secret %s/%s", namespace, name)
+	return secret
 }

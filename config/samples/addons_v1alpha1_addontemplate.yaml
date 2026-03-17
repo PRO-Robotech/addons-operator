@@ -1,0 +1,26 @@
+apiVersion: addons.in-cloud.io/v1alpha1
+kind: AddonTemplate
+metadata:
+  name: cilium-v1.17.4
+  labels:
+    name.addons.in-cloud.io: cilium
+    version.addons.in-cloud.io: v1.17.4
+spec:
+  template: |
+    apiVersion: addons.in-cloud.io/v1alpha1
+    kind: Addon
+    metadata:
+      name: {{ .Values.spec.name }}
+    spec:
+      path: "helm-chart-sources/{{ .Values.spec.name }}"
+      pluginName: helm-with-values
+      repoURL: "https://github.com/LTD-Beget/kaas-helm-charts"
+      version: "{{ .Values.spec.version }}"
+      releaseName: {{ .Values.spec.name }}
+      targetCluster: "{{ .Values.spec.cluster }}"
+      targetNamespace: "beget-{{ .Values.spec.name }}"
+      backend:
+        type: argocd
+        namespace: argocd
+      variables:
+        cluster_name: "{{ .Values.spec.cluster }}"

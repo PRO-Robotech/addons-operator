@@ -7,6 +7,48 @@
 
 ## [Unreleased]
 
+### Добавлено
+
+- **AddonClaim CRD** — мультикластерное управление аддонами
+  - Namespaced ресурс для запроса развёртывания аддона в удалённом infra-кластере
+  - `spec.addon.name` — явная, обязательная и **неизменяемая** идентификация Addon-ресурса в удалённом кластере. Контроллер всегда переопределяет `metadata.name` из отрендеренного шаблона значением `spec.addon.name`, предотвращая случайное переименование аддонов при изменении шаблона
+  - Неизменяемость `spec.addon.name` обеспечивается CEL transition rule и webhook (defense-in-depth)
+  - `spec.variables` — произвольные параметры для рендеринга шаблона (доступны как `.Vars.<key>`)
+  - Поддержка values через JSON объект (`values`) или YAML строку (`valuesString`)
+  - `spec.valueLabels` — переопределение метки на генерируемом AddonValue (по умолчанию `"claim"`)
+  - `spec.version` — опциональная версия (например, версия Kubernetes для CAPI control plane). При наличии аннотации `external-status/type` копируется в `status.version`
+  - Status conditions: TemplateRendered, RemoteConnected, AddonSynced, Ready, Progressing, Degraded
+  - Зеркалирование статуса удалённого Addon в `status.remoteAddonStatus`
+
+
+- **CAPI Control Plane Contract** — интеграция с Cluster API
+  - Аннотация `external-status/type: controlplane` активирует CAPI-совместимые поля в status
+  - `status.ready` — `*bool` для трёхстороннего статуса (`nil` = неизвестен, `false` = не готов, `true` = готов)
+  - `status.initialized` / `status.initialization.controlPlaneInitialized` — отражают поле `status.deployed` (latching bool) из remote Addon
+  - `status.externalManagedControlPlane` — всегда `true` при наличии аннотации
+  - `status.version` — копируется из `spec.version`
+  - Поддержка обеих версий CAPI contract: v1beta1 и v1beta2
+  - Все CAPI bool-поля (включая `ready`) используют `*bool` + `omitempty` для корректной JSON-сериализации (absent vs false)
+
+- **AddonTemplate CRD** — шаблоны для генерации Addon из AddonClaim
+  - Cluster-scoped ресурс с Go template для рендеринга Addon YAML
+  - Контекст шаблона: `.Vars.<key>` (shortcut), `.Values.spec.*`, `.Values.metadata.*`
+  - Sprig v3 функции доступны в шаблонах
+  - Валидация синтаксиса шаблона через webhook
+
+- **addonclaim-controller** — отдельный бинарник для мультикластерного управления
+  - Флаг `--polling-interval` для настройки интервала опроса удалённого кластера (по умолчанию 15s)
+  - Кэширование remote client'ов по kubeconfig Secret
+  - Автоматическая очистка удалённых ресурсов при удалении AddonClaim (finalizer)
+
+- **Dockerfile.addonclaim** — отдельный Dockerfile для сборки addonclaim-controller
+
+### Изменено
+
+- **Перенос `finalizer` в `spec.backend`** — поле `spec.finalizer` перенесено в `spec.backend.finalizer` для логической группировки с остальными настройками backend (type, namespace, project, syncPolicy)
+
+- **Безопасное удаление Addon** — финализатор Addon теперь дожидается полного удаления ArgoCD Application перед снятием. Если у Application есть собственный финализатор (`resources-finalizer.argocd.argoproj.io`), контроллер опрашивает состояние каждые 5 секунд до завершения очистки. Предотвращает ситуацию, когда Addon удаляется раньше, чем ArgoCD закончит удаление managed-ресурсов.
+
 ## [0.2.0] - 2026-02-18
 
 ### Добавлено

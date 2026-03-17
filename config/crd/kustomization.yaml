@@ -5,6 +5,8 @@ resources:
 - bases/addons.in-cloud.io_addons.yaml
 - bases/addons.in-cloud.io_addonvalues.yaml
 - bases/addons.in-cloud.io_addonphases.yaml
+- bases/addons.in-cloud.io_addonclaims.yaml
+- bases/addons.in-cloud.io_addontemplates.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

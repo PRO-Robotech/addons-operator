@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	addonctrl "addons-operator/internal/controller/addon"
 	"addons-operator/internal/controller/conditions"
 )
 
@@ -64,7 +65,7 @@ var _ = Describe("Addon Controller", func() {
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
 		})
 	})
-	Context("findAddonsForAddonValue", func() {
+	Context("FindAddonsForAddonValue", func() {
 		ctx := context.Background()
 		It("should return addon when AddonValue labels match selector", func() {
 			name := uniqueName("selector-match")
@@ -106,11 +107,11 @@ var _ = Describe("Addon Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
 			// Test the handler function
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			Expect(requests).To(HaveLen(1))
 			Expect(requests[0].Name).To(Equal(name))
 			Expect(requests[0].Namespace).To(BeEmpty())
@@ -170,11 +171,11 @@ var _ = Describe("Addon Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
 			// Test: should return both addons
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			Expect(requests).To(HaveLen(2))
 			names := []string{requests[0].Name, requests[1].Name}
 			Expect(names).To(ContainElements(name1, name2))
@@ -217,11 +218,11 @@ var _ = Describe("Addon Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			// Should not match: addon's selector says "other-addon" but AddonValue has "completely-different"
 			Expect(requests).To(BeEmpty())
 			// Cleanup
@@ -242,11 +243,11 @@ var _ = Describe("Addon Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, av)).To(Succeed())
-			controllerReconciler := &AddonReconciler{
+			controllerReconciler := &addonctrl.AddonReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			requests := controllerReconciler.findAddonsForAddonValue(ctx, av)
+			requests := controllerReconciler.FindAddonsForAddonValue(ctx, av)
 			Expect(requests).To(BeEmpty())
 			// Cleanup
 			Expect(k8sClient.Delete(ctx, av)).To(Succeed())
@@ -305,6 +306,7 @@ var _ = Describe("Addon Controller", func() {
 			By("Waiting for Application to be created with merged values")
 			Eventually(func() map[string]any {
 				app := waitForApplication(addonName, "argocd")
+
 				return getApplicationValues(app)
 			}, timeout, interval).Should(And(
 				HaveKeyWithValue("a", float64(1)), // From default
@@ -481,6 +483,7 @@ var _ = Describe("Addon Controller", func() {
 				if current.Status.ObservedGeneration != initialObservedGen {
 					return false
 				}
+
 				return true
 			}, 3*time.Second, 500*time.Millisecond).Should(BeTrue(),
 				"Conditions and idempotent fields should remain stable over time")
@@ -531,6 +534,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 					return ""
 				}
+
 				return current.Annotations["test.trigger"]
 			}, timeout, interval).Should(Equal("reconcile"))
 			By("Verifying timestamps remain unchanged over time")
@@ -546,6 +550,7 @@ var _ = Describe("Addon Controller", func() {
 						return false
 					}
 				}
+
 				return true
 			}, 1*time.Second, 200*time.Millisecond).Should(BeTrue(),
 				"LastTransitionTime should not change when status is unchanged")
@@ -651,6 +656,7 @@ var _ = Describe("Addon Controller", func() {
 			By("Verifying no Application is created")
 			Consistently(func() error {
 				app := &argocdv1alpha1.Application{}
+
 				return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app)
 			}, 2*time.Second, 200*time.Millisecond).ShouldNot(Succeed())
 			By("Cleanup")
@@ -710,6 +716,7 @@ var _ = Describe("Addon Controller", func() {
 				errA := k8sClient.Get(ctx, types.NamespacedName{Name: nameA, Namespace: "argocd"}, appA)
 				appB := &argocdv1alpha1.Application{}
 				errB := k8sClient.Get(ctx, types.NamespacedName{Name: nameB, Namespace: "argocd"}, appB)
+
 				return errA != nil && errB != nil // Both should not exist
 			}, 2*time.Second, 200*time.Millisecond).Should(BeTrue())
 			By("Cleanup")
@@ -840,6 +847,7 @@ var _ = Describe("Addon Controller", func() {
 					return false
 				}
 				cond := meta.FindStatusCondition(addon.Status.Conditions, conditions.TypeDependenciesMet)
+
 				return cond != nil && cond.Status == metav1.ConditionTrue
 			}, timeout, interval).Should(BeTrue())
 			By("Verifying blocked Addon Application is created since dependency is ready")
@@ -847,6 +855,7 @@ var _ = Describe("Addon Controller", func() {
 			// should create its Application without needing to wait
 			Eventually(func() error {
 				app := &argocdv1alpha1.Application{}
+
 				return k8sClient.Get(ctx, types.NamespacedName{Name: blockedName, Namespace: "argocd"}, app)
 			}, 60*time.Second, interval).Should(Succeed())
 			By("Cleanup")
@@ -882,12 +891,12 @@ var _ = Describe("Addon Controller", func() {
 			By("Triggering concurrent annotation updates")
 			var wg sync.WaitGroup
 			errChan := make(chan error, 10)
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				wg.Add(1)
 				go func(n int) {
 					defer wg.Done()
 					// Each goroutine fetches fresh version and updates
-					for attempt := 0; attempt < 3; attempt++ {
+					for range 3 {
 						current := &addonsv1alpha1.Addon{}
 						if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 							continue
@@ -956,6 +965,7 @@ var _ = Describe("Addon Controller", func() {
 						return err
 					}
 					current.Spec.Version = fmt.Sprintf("1.0.%d", i)
+
 					return k8sClient.Update(ctx, current)
 				}, timeout, interval).Should(Succeed())
 			}
@@ -965,6 +975,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 					return ""
 				}
+
 				return current.Spec.Version
 			}, timeout, interval).Should(Equal("1.0.5"))
 			By("Verifying Application reflects latest version")
@@ -973,6 +984,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
 					return ""
 				}
+
 				return app.Spec.Source.TargetRevision
 			}, timeout, interval).Should(Equal("1.0.5"))
 			By("Cleanup")
@@ -1024,6 +1036,7 @@ var _ = Describe("Addon Controller", func() {
 				if cond == nil {
 					return ""
 				}
+
 				return cond.Reason
 			}, timeout, interval).Should(Equal(conditions.ReasonPaused))
 			By("Verifying Progressing is False when paused")
@@ -1036,6 +1049,7 @@ var _ = Describe("Addon Controller", func() {
 				if cond == nil {
 					return ""
 				}
+
 				return cond.Status
 			}, timeout, interval).Should(Equal(metav1.ConditionFalse))
 			By("Updating Addon spec while paused")
@@ -1048,6 +1062,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
 					return ""
 				}
+
 				return app.Spec.Source.TargetRevision
 			}, 2*time.Second, 200*time.Millisecond).Should(Equal("1.0.0"))
 			// Also verify resource version didn't change (no updates happened)
@@ -1090,11 +1105,13 @@ var _ = Describe("Addon Controller", func() {
 				if cond == nil {
 					return ""
 				}
+
 				return cond.Reason
 			}, timeout, interval).Should(Equal(conditions.ReasonPaused))
 			By("Verifying no Application is created while paused")
 			Consistently(func() error {
 				app := &argocdv1alpha1.Application{}
+
 				return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app)
 			}, 2*time.Second, 200*time.Millisecond).ShouldNot(Succeed())
 			By("Removing pause annotation")
@@ -1146,6 +1163,7 @@ var _ = Describe("Addon Controller", func() {
 				if cond == nil {
 					return ""
 				}
+
 				return cond.Reason
 			}, timeout, interval).Should(Equal(conditions.ReasonPaused))
 			By("Deleting the paused Addon")
@@ -1153,11 +1171,13 @@ var _ = Describe("Addon Controller", func() {
 			By("Verifying Addon is deleted")
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, &addonsv1alpha1.Addon{})
+
 				return apierrors.IsNotFound(err)
 			}, timeout, interval).Should(BeTrue())
 			By("Verifying Application is also deleted")
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, &argocdv1alpha1.Application{})
+
 				return apierrors.IsNotFound(err)
 			}, timeout, interval).Should(BeTrue())
 		})
@@ -1197,6 +1217,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 					return false
 				}
+
 				return current.Status.ValuesHash != ""
 			}, timeout, interval).Should(BeTrue())
 
@@ -1235,6 +1256,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 					return false
 				}
+
 				return current.Status.ValuesHash != ""
 			}, timeout, interval).Should(BeTrue())
 
@@ -1291,6 +1313,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
 					return nil
 				}
+
 				return getApplicationValues(app)
 			}, timeout, interval).Should(HaveKeyWithValue("lateKey", "lateValue"))
 
@@ -1341,6 +1364,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
 					return ""
 				}
+
 				return app.Spec.Source.TargetRevision
 			}, timeout, interval).Should(Equal("2.0.0"))
 
@@ -1351,6 +1375,7 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 					return ""
 				}
+
 				return current.Status.ValuesHash
 			}, timeout, interval).Should(Equal(initialHash)) // Hash is from values only, version doesn't change it
 
@@ -1396,6 +1421,7 @@ var _ = Describe("Addon Controller", func() {
 				}
 				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
 				app.Status.Health.Status = health.HealthStatusHealthy
+
 				return k8sClient.Update(ctx, app)
 			}, timeout, interval).Should(Succeed())
 
@@ -1405,8 +1431,17 @@ var _ = Describe("Addon Controller", func() {
 				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
 					return false
 				}
+
 				return current.Status.Deployed
 			}, timeout, interval).Should(BeTrue())
+
+			By("Verifying Deployed condition is set with correct timestamp")
+			waitForCondition(name, conditions.TypeDeployed, metav1.ConditionTrue)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
+			deployedCond := meta.FindStatusCondition(addon.Status.Conditions, conditions.TypeDeployed)
+			Expect(deployedCond).NotTo(BeNil())
+			Expect(deployedCond.Reason).To(Equal("Deployed"))
+			deployedTime := deployedCond.LastTransitionTime
 
 			By("Setting Application status to Degraded")
 			Eventually(func() error {
@@ -1415,6 +1450,7 @@ var _ = Describe("Addon Controller", func() {
 					return err
 				}
 				app.Status.Health.Status = health.HealthStatusDegraded
+
 				return k8sClient.Update(ctx, app)
 			}, timeout, interval).Should(Succeed())
 
@@ -1425,10 +1461,61 @@ var _ = Describe("Addon Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)).To(Succeed())
 			Expect(addon.Status.Deployed).To(BeTrue())
 
+			By("Verifying Deployed condition timestamp is preserved after status change")
+			currentDeployedCond := meta.FindStatusCondition(addon.Status.Conditions, conditions.TypeDeployed)
+			Expect(currentDeployedCond).NotTo(BeNil())
+			Expect(currentDeployedCond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(currentDeployedCond.LastTransitionTime).To(Equal(deployedTime))
+
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
 		})
 	})
+	Context("No-op reconciliation", func() {
+		It("should not update ResourceVersion after stabilization", func() {
+			name := uniqueName("addon-noop")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created and conditions to stabilize")
+			waitForApplication(name, "argocd")
+			waitForCondition(name, conditions.TypeApplicationCreated, metav1.ConditionTrue)
+
+			By("Capturing ResourceVersion after stabilization")
+			stabilized := &addonsv1alpha1.Addon{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, stabilized)).To(Succeed())
+			rv := stabilized.ResourceVersion
+
+			By("Verifying ResourceVersion stays the same for 3 seconds")
+			Consistently(func() string {
+				a := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, a); err != nil {
+					return ""
+				}
+
+				return a.ResourceVersion
+			}, 3*time.Second, 500*time.Millisecond).Should(Equal(rv))
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
+
 	Context("Large Scale Scenarios", Label("large-scale"), func() {
 		// These tests verify behavior with multiple Addons.
 		// Use "ginkgo --label-filter=large-scale" to run these specifically.
@@ -1436,7 +1523,7 @@ var _ = Describe("Addon Controller", func() {
 			const numAddons = 20
 			addons := make([]*addonsv1alpha1.Addon, numAddons)
 			By(fmt.Sprintf("Creating %d Addons", numAddons))
-			for i := 0; i < numAddons; i++ {
+			for i := range numAddons {
 				addon := &addonsv1alpha1.Addon{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: uniqueName(fmt.Sprintf("scale-%03d", i)),
@@ -1468,10 +1555,12 @@ var _ = Describe("Addon Controller", func() {
 					for _, a := range addons {
 						if app.Name == a.Name {
 							count++
+
 							break
 						}
 					}
 				}
+
 				return count
 			}, 2*time.Minute, time.Second).Should(Equal(numAddons))
 			By("Verifying all Addons have ApplicationCreated condition")

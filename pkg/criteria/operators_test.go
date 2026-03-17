@@ -122,6 +122,7 @@ func TestEvalEqual(t *testing.T) {
 			got, err := EvalEqual(tt.actual, tt.expected)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)
@@ -217,6 +218,7 @@ func TestEvalIn(t *testing.T) {
 			got, err := EvalIn(tt.actual, tt.expected)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)
@@ -336,6 +338,7 @@ func TestEvalGreaterThan(t *testing.T) {
 			got, err := EvalGreaterThan(tt.actual, tt.expected)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)
@@ -525,6 +528,7 @@ func TestEvalMatches(t *testing.T) {
 			got, err := EvalMatches(tt.actual, tt.expected)
 			if tt.wantErr {
 				assert.Error(t, err)
+
 				return
 			}
 			require.NoError(t, err)

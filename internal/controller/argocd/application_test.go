@@ -1459,7 +1459,7 @@ func TestApplicationBuilder_Build_WithFinalizer(t *testing.T) {
 
 	t.Run("finalizer enabled", func(t *testing.T) {
 		addon := baseAddon()
-		addon.Spec.Finalizer = ptr.To(true)
+		addon.Spec.Backend.Finalizer = ptr.To(true)
 
 		app, err := builder.Build(addon, "argocd", nil)
 		require.NoError(t, err)
@@ -1468,7 +1468,7 @@ func TestApplicationBuilder_Build_WithFinalizer(t *testing.T) {
 
 	t.Run("finalizer disabled", func(t *testing.T) {
 		addon := baseAddon()
-		addon.Spec.Finalizer = ptr.To(false)
+		addon.Spec.Backend.Finalizer = ptr.To(false)
 
 		app, err := builder.Build(addon, "argocd", nil)
 		require.NoError(t, err)
@@ -1477,7 +1477,7 @@ func TestApplicationBuilder_Build_WithFinalizer(t *testing.T) {
 
 	t.Run("finalizer nil", func(t *testing.T) {
 		addon := baseAddon()
-		addon.Spec.Finalizer = nil
+		addon.Spec.Backend.Finalizer = nil
 
 		app, err := builder.Build(addon, "argocd", nil)
 		require.NoError(t, err)
@@ -1507,7 +1507,7 @@ func TestApplicationBuilder_NeedsUpdate_Finalizer(t *testing.T) {
 
 	t.Run("detects finalizer added", func(t *testing.T) {
 		addon := baseAddon()
-		addon.Spec.Finalizer = ptr.To(true)
+		addon.Spec.Backend.Finalizer = ptr.To(true)
 
 		existing, err := builder.Build(baseAddon(), "argocd", values)
 		require.NoError(t, err)
@@ -1520,13 +1520,13 @@ func TestApplicationBuilder_NeedsUpdate_Finalizer(t *testing.T) {
 
 	t.Run("detects finalizer removed", func(t *testing.T) {
 		addonWithFinalizer := baseAddon()
-		addonWithFinalizer.Spec.Finalizer = ptr.To(true)
+		addonWithFinalizer.Spec.Backend.Finalizer = ptr.To(true)
 
 		existing, err := builder.Build(addonWithFinalizer, "argocd", values)
 		require.NoError(t, err)
 
 		addonWithout := baseAddon()
-		addonWithout.Spec.Finalizer = ptr.To(false)
+		addonWithout.Spec.Backend.Finalizer = ptr.To(false)
 
 		needsUpdate, reason, err := builder.NeedsUpdate(existing, addonWithout, "argocd", values)
 		require.NoError(t, err)
@@ -1536,7 +1536,7 @@ func TestApplicationBuilder_NeedsUpdate_Finalizer(t *testing.T) {
 
 	t.Run("no update when both have finalizer", func(t *testing.T) {
 		addon := baseAddon()
-		addon.Spec.Finalizer = ptr.To(true)
+		addon.Spec.Backend.Finalizer = ptr.To(true)
 
 		existing, err := builder.Build(addon, "argocd", values)
 		require.NoError(t, err)
@@ -1587,7 +1587,7 @@ func TestApplicationBuilder_UpdateSpec_Finalizer(t *testing.T) {
 		}
 
 		addon := baseAddon()
-		addon.Spec.Finalizer = ptr.To(true)
+		addon.Spec.Backend.Finalizer = ptr.To(true)
 
 		err := builder.UpdateSpec(existing, addon, "argocd", values)
 		require.NoError(t, err)
@@ -1604,7 +1604,7 @@ func TestApplicationBuilder_UpdateSpec_Finalizer(t *testing.T) {
 		}
 
 		addon := baseAddon()
-		addon.Spec.Finalizer = ptr.To(false)
+		addon.Spec.Backend.Finalizer = ptr.To(false)
 
 		err := builder.UpdateSpec(existing, addon, "argocd", values)
 		require.NoError(t, err)

@@ -65,11 +65,7 @@ Addon:
 
 ### Удаление ресурсов
 
-| Поле | Обязательно | Описание |
-|------|-------------|----------|
-| `finalizer` | Нет | Каскадное удаление ресурсов при удалении Application |
-
-Когда `finalizer: true`, при удалении Addon (и, соответственно, Argo CD Application) все ресурсы, созданные этим Application, будут удалены из кластера. Без этого поля удаляется только сам объект Application.
+Когда `backend.finalizer: true`, при удалении Addon (и, соответственно, Argo CD Application) все ресурсы, созданные этим Application, будут удалены из кластера. Без этого поля удаляется только сам объект Application.
 
 ### Зависимости
 
@@ -94,14 +90,12 @@ spec:
   targetCluster: in-cluster
   targetNamespace: kube-system
 
-  # Каскадное удаление ресурсов при удалении Addon
-  finalizer: true
-
   # Конфигурация Argo CD
   backend:
     type: argocd
     namespace: argocd
     project: infrastructure
+    finalizer: true  # каскадное удаление ресурсов при удалении Addon
     syncPolicy:
       automated:
         prune: true
@@ -383,6 +377,31 @@ NAME      CHART     VERSION   READY   DEPLOYED   AGE
 cilium    cilium    1.14.5    True    true       5m
 my-app    my-app    2.0.0     False   true       10m   # был развёрнут, сейчас нездоров
 new-app   new-app   1.0.0     False   <none>     30s   # ещё не был развёрнут
+```
+
+## Удаление Addon
+
+При удалении Addon контроллер выполняет безопасную очистку:
+
+1. Контроллер отправляет запрос на удаление ArgoCD Application
+2. Контроллер **дожидается полного удаления** Application (опрос каждые 5 секунд)
+3. Только после подтверждения удаления Application — снимает финализатор с Addon
+4. Addon удаляется из кластера
+
+Если у Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.backend.finalizer: true`), ArgoCD сначала удалит все managed-ресурсы (Deployments, Services, ConfigMaps и др.), и только потом удалит сам объект Application. Контроллер Addon терпеливо ждёт завершения этого процесса.
+
+### Диагностика
+
+В логах контроллера при ожидании удаления будет:
+
+```
+INFO  Waiting for ArgoCD Application to be fully deleted  {"name": "cilium", "namespace": "argocd"}
+```
+
+После завершения:
+
+```
+INFO  ArgoCD Application deleted  {"name": "cilium", "namespace": "argocd"}
 ```
 
 ## Связанные ресурсы

@@ -95,6 +95,7 @@ func (c *DependencyChecker) checkDependency(ctx context.Context, dep addonsv1alp
 				Reason:    fmt.Sprintf("Addon %s not found", dep.Name),
 			}, nil
 		}
+
 		return CheckResult{}, fmt.Errorf("get Addon %s: %w", dep.Name, err)
 	}
 
@@ -114,7 +115,7 @@ func (c *DependencyChecker) checkDependency(ctx context.Context, dep addonsv1alp
 func (c *DependencyChecker) evaluateCriterion(ctx context.Context, depAddon *addonsv1alpha1.Addon, criterion addonsv1alpha1.Criterion) (CheckResult, error) {
 	var obj any
 
-	if criterion.Source != nil {
+	if criterion.Source != nil { //nolint:nestif // source resolution with error handling
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(schema.FromAPIVersionAndKind(
 			criterion.Source.APIVersion,
@@ -132,6 +133,7 @@ func (c *DependencyChecker) evaluateCriterion(ctx context.Context, depAddon *add
 					Reason:    fmt.Sprintf("Resource %s/%s not found", criterion.Source.Kind, criterion.Source.Name),
 				}, nil
 			}
+
 			return CheckResult{}, fmt.Errorf("get resource %s/%s: %w", criterion.Source.Kind, criterion.Source.Name, err)
 		}
 		obj = u.Object
@@ -168,6 +170,7 @@ func (c *DependencyChecker) evaluateCriterion(ctx context.Context, depAddon *add
 		if criterion.Value != nil {
 			expectedValue = string(criterion.Value.Raw)
 		}
+
 		return CheckResult{
 			Satisfied: false,
 			Reason: fmt.Sprintf("Waiting for %s: %s %s %s (actual: %v)",

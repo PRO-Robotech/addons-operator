@@ -118,6 +118,12 @@ var _ = BeforeSuite(func() {
 	err = SetupAddonValueWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = SetupAddonClaimWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = SetupAddonTemplateWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:webhook
 
 	go func() {
@@ -159,6 +165,7 @@ func getFirstFoundEnvTestBinaryDir() string {
 	entries, err := os.ReadDir(basePath)
 	if err != nil {
 		logf.Log.Error(err, "Failed to read directory", "path", basePath)
+
 		return ""
 	}
 	for _, entry := range entries {
@@ -166,5 +173,6 @@ func getFirstFoundEnvTestBinaryDir() string {
 			return filepath.Join(basePath, entry.Name())
 		}
 	}
+
 	return ""
 }

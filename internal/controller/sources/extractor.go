@@ -19,6 +19,7 @@ package sources
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -113,6 +114,7 @@ func (e *extractor) extractField(obj *unstructured.Unstructured, rule addonsv1al
 	return value, nil
 }
 
+//nolint:gocognit,gocyclo // recursive path traversal with multiple node types
 func extractByPath(obj any, path string) (any, bool, error) {
 	path = strings.TrimPrefix(path, ".")
 	if path == "" {
@@ -125,7 +127,7 @@ func extractByPath(obj any, path string) (any, bool, error) {
 	if strings.HasPrefix(path, "[") {
 		end := findClosingBracket(path)
 		if end == -1 {
-			return nil, false, fmt.Errorf("unclosed bracket in path")
+			return nil, false, errors.New("unclosed bracket in path")
 		}
 		segment = path[1:end]
 		rest = path[end+1:]
@@ -162,6 +164,7 @@ func extractByPath(obj any, path string) (any, bool, error) {
 		if rest == "" || rest == "." {
 			return val, true, nil
 		}
+
 		return extractByPath(val, rest)
 
 	case []any:
@@ -175,6 +178,7 @@ func extractByPath(obj any, path string) (any, bool, error) {
 		if rest == "" || rest == "." {
 			return v[idx], true, nil
 		}
+
 		return extractByPath(v[idx], rest)
 
 	default:
@@ -187,12 +191,13 @@ func findClosingBracket(path string) int {
 	inString := false
 	stringChar := byte(0)
 
-	for i := 0; i < len(path); i++ {
+	for i := range len(path) {
 		c := path[i]
 		if inString {
 			if c == stringChar {
 				inString = false
 			}
+
 			continue
 		}
 
@@ -209,6 +214,7 @@ func findClosingBracket(path string) int {
 			}
 		}
 	}
+
 	return -1
 }
 
@@ -244,6 +250,7 @@ func setNestedField(obj map[string]any, path string, value any) error {
 	for i, part := range parts {
 		if i == len(parts)-1 {
 			current[part] = value
+
 			return nil
 		}
 
@@ -256,6 +263,7 @@ func setNestedField(obj map[string]any, path string, value any) error {
 			return fmt.Errorf("path %q: key %q is %T, not a map", path, part, current[part])
 		}
 	}
+
 	return nil
 }
 

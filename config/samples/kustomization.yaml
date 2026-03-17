@@ -3,4 +3,6 @@ resources:
 - addons_v1alpha1_addon.yaml
 - addons_v1alpha1_addonvalue.yaml
 - addons_v1alpha1_addonphase.yaml
+- addons_v1alpha1_addonclaim.yaml
+- addons_v1alpha1_addontemplate.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

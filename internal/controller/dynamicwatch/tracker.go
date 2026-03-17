@@ -101,6 +101,7 @@ func (t *tracker) RemoveAddon(addonUID types.UID) GVKSet {
 	if gvks == nil {
 		return make(GVKSet)
 	}
+
 	return gvks
 }
 
@@ -115,6 +116,7 @@ func (t *tracker) GetAllGVKs() GVKSet {
 			result[gvk] = struct{}{}
 		}
 	}
+
 	return result
 }
 
@@ -122,5 +124,6 @@ func (t *tracker) GetAllGVKs() GVKSet {
 func (t *tracker) GetAddonCount() int {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+
 	return len(t.addonGVKs)
 }

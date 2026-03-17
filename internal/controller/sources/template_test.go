@@ -388,7 +388,7 @@ func TestTemplateCacheConcurrent(t *testing.T) {
 	done := make(chan struct{})
 
 	// Start multiple goroutines that all try to parse the same template
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			tmpl, err := cache.getOrParse(content)
 			require.NoError(t, err)
@@ -398,7 +398,7 @@ func TestTemplateCacheConcurrent(t *testing.T) {
 	}
 
 	// Wait for all goroutines to complete
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		<-done
 	}
 
@@ -413,7 +413,7 @@ func TestTemplateCacheConcurrentDifferentTemplates(t *testing.T) {
 	done := make(chan struct{})
 
 	// Start multiple goroutines with different templates
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(idx int) {
 			// Use two different templates alternately
 			var content string
@@ -430,7 +430,7 @@ func TestTemplateCacheConcurrentDifferentTemplates(t *testing.T) {
 	}
 
 	// Wait for all goroutines to complete
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		<-done
 	}
 

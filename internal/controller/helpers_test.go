@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"maps"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +27,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/yaml"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
@@ -36,6 +40,7 @@ var testCounter int64
 // uniqueName generates a unique name for test resources.
 func uniqueName(base string) string {
 	counter := atomic.AddInt64(&testCounter, 1)
+
 	return fmt.Sprintf("%s-%d-%d", base, time.Now().UnixNano()%10000, counter)
 }
 
@@ -96,6 +101,7 @@ func createTestAddon(name string, opts ...AddonOption) *addonsv1alpha1.Addon {
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, addon)).To(Succeed())
+
 	return addon
 }
 
@@ -106,9 +112,7 @@ func createTestAddonValue(name, addonName string, values map[string]any, extraLa
 	labels := map[string]string{
 		"addons.in-cloud.io/addon": addonName,
 	}
-	for k, v := range extraLabels {
-		labels[k] = v
-	}
+	maps.Copy(labels, extraLabels)
 
 	av := &addonsv1alpha1.AddonValue{
 		ObjectMeta: metav1.ObjectMeta{
@@ -121,6 +125,7 @@ func createTestAddonValue(name, addonName string, values map[string]any, extraLa
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, av)).To(Succeed())
+
 	return av
 }
 
@@ -130,6 +135,7 @@ func mustMarshalYAML(v any) []byte {
 	if err != nil {
 		panic(err)
 	}
+
 	return data
 }
 
@@ -147,12 +153,11 @@ func createTestAddonPhase(name string, rules []addonsv1alpha1.PhaseRule) *addons
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, phase)).To(Succeed())
+
 	return phase
 }
 
 // createTestSecret creates a Secret for testing.
-//
-//nolint:unparam // namespace parameter kept for flexibility in future tests
 func createTestSecret(name, namespace string, data map[string][]byte) *corev1.Secret {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -163,6 +168,7 @@ func createTestSecret(name, namespace string, data map[string][]byte) *corev1.Se
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, secret)).To(Succeed())
+
 	return secret
 }
 
@@ -179,6 +185,7 @@ func createTestConfigMap(name, namespace string, data map[string]string) *corev1
 	}
 
 	ExpectWithOffset(1, k8sClient.Create(ctx, cm)).To(Succeed())
+
 	return cm
 }
 
@@ -197,6 +204,7 @@ func waitForCondition(name string, condType string, status metav1.ConditionStatu
 				return c.Status
 			}
 		}
+
 		return metav1.ConditionUnknown
 	}, timeout, interval).Should(Equal(status))
 }
@@ -214,6 +222,7 @@ func waitForConditionReason(name string, condType string, reason string) {
 				return c.Reason
 			}
 		}
+
 		return ""
 	}, timeout, interval).Should(Equal(reason))
 }
@@ -225,8 +234,10 @@ func waitForApplication(name, namespace string) *argocdv1alpha1.Application {
 	var app *argocdv1alpha1.Application
 	EventuallyWithOffset(1, func() error {
 		app = &argocdv1alpha1.Application{}
+
 		return k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, app)
 	}, timeout, interval).Should(Succeed())
+
 	return app
 }
 
@@ -237,6 +248,7 @@ func waitForApplicationNotExist(name, namespace string) {
 	EventuallyWithOffset(1, func() bool {
 		app := &argocdv1alpha1.Application{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, app)
+
 		return err != nil
 	}, timeout, interval).Should(BeTrue())
 }
@@ -254,6 +266,7 @@ func waitForPhaseRuleMatched(name, ruleName string, matched bool) {
 				return r.Matched == matched
 			}
 		}
+
 		return !matched // Rule not found, return opposite
 	}, timeout, interval).Should(BeTrue())
 }
@@ -269,6 +282,7 @@ func waitForAddonPhaseValuesSelector(name string, hasSelector bool) {
 		if hasSelector {
 			return len(addon.Status.PhaseValuesSelector) > 0
 		}
+
 		return len(addon.Status.PhaseValuesSelector) == 0
 	}, timeout, interval).Should(BeTrue())
 }
@@ -283,12 +297,11 @@ func getApplicationValues(app *argocdv1alpha1.Application) map[string]any {
 	if err := yaml.Unmarshal([]byte(app.Spec.Source.Helm.Values), &values); err != nil {
 		return nil
 	}
+
 	return values
 }
 
 // deleteAddon deletes an Addon if it exists.
-//
-//nolint:unused // Helper for future tests
 func deleteAddon(name string) {
 	addon := &addonsv1alpha1.Addon{}
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, addon)
@@ -298,8 +311,6 @@ func deleteAddon(name string) {
 }
 
 // deleteAddonValue deletes an AddonValue if it exists.
-//
-//nolint:unused // Helper for future tests
 func deleteAddonValue(name string) {
 	av := &addonsv1alpha1.AddonValue{}
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, av)
@@ -320,12 +331,89 @@ func deleteAddonPhase(name string) {
 }
 
 // deleteSecret deletes a Secret if it exists.
-//
-//nolint:unparam // namespace parameter kept for flexibility in future tests
 func deleteSecret(name, namespace string) {
 	secret := &corev1.Secret{}
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret)
 	if err == nil {
 		ExpectWithOffset(1, k8sClient.Delete(ctx, secret)).To(Succeed())
+	}
+}
+
+// restConfigToKubeconfig converts a rest.Config to kubeconfig bytes.
+// Used in AddonClaim integration tests where the "remote" cluster is the same envtest.
+func restConfigToKubeconfig(restConfig *rest.Config) []byte {
+	kubeconfig := clientcmdapi.NewConfig()
+	kubeconfig.Clusters["test"] = &clientcmdapi.Cluster{
+		Server:                   restConfig.Host,
+		CertificateAuthorityData: restConfig.CAData,
+	}
+	kubeconfig.AuthInfos["test"] = &clientcmdapi.AuthInfo{
+		ClientCertificateData: restConfig.CertData,
+		ClientKeyData:         restConfig.KeyData,
+	}
+	kubeconfig.Contexts["test"] = &clientcmdapi.Context{
+		Cluster:  "test",
+		AuthInfo: "test",
+	}
+	kubeconfig.CurrentContext = "test"
+
+	data, err := clientcmd.Write(*kubeconfig)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+	return data
+}
+
+// createTestAddonTemplate creates an AddonTemplate for testing.
+//
+//nolint:unparam // template parameter kept generic for flexibility
+func createTestAddonTemplate(name string, template string) *addonsv1alpha1.AddonTemplate {
+	tmpl := &addonsv1alpha1.AddonTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		Spec: addonsv1alpha1.AddonTemplateSpec{
+			Template: template,
+		},
+	}
+
+	ExpectWithOffset(1, k8sClient.Create(ctx, tmpl)).To(Succeed())
+
+	return tmpl
+}
+
+// createTestAddonClaim creates an AddonClaim for testing.
+//
+//nolint:unparam // namespace parameter kept generic for flexibility
+func createTestAddonClaim(name, namespace string, spec addonsv1alpha1.AddonClaimSpec) *addonsv1alpha1.AddonClaim {
+	claim := &addonsv1alpha1.AddonClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: spec,
+	}
+
+	ExpectWithOffset(1, k8sClient.Create(ctx, claim)).To(Succeed())
+
+	return claim
+}
+
+// deleteAddonTemplate deletes an AddonTemplate if it exists.
+func deleteAddonTemplate(name string) {
+	tmpl := &addonsv1alpha1.AddonTemplate{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, tmpl)
+	if err == nil {
+		ExpectWithOffset(1, k8sClient.Delete(ctx, tmpl)).To(Succeed())
+	}
+}
+
+// deleteAddonClaim deletes an AddonClaim if it exists.
+//
+//nolint:unparam // namespace parameter kept generic for flexibility
+func deleteAddonClaim(name, namespace string) {
+	claim := &addonsv1alpha1.AddonClaim{}
+	err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, claim)
+	if err == nil {
+		ExpectWithOffset(1, k8sClient.Delete(ctx, claim)).To(Succeed())
 	}
 }

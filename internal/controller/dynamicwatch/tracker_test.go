@@ -231,7 +231,7 @@ func TestTracker_ConcurrentAccess(t *testing.T) {
 	errChan := make(chan error, 300)
 
 	// 100 goroutines setting GVKs
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -241,7 +241,7 @@ func TestTracker_ConcurrentAccess(t *testing.T) {
 	}
 
 	// 100 goroutines getting GVKs
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -251,7 +251,7 @@ func TestTracker_ConcurrentAccess(t *testing.T) {
 	}
 
 	// 100 goroutines getting all GVKs
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -286,8 +286,7 @@ func BenchmarkSetGVKs(b *testing.B) {
 	tracker := NewTracker()
 	gvks := NewGVKSet(gvkDeployment, gvkSecret, gvkConfigMap)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tracker.SetGVKs(addonUID1, gvks)
 	}
 }
@@ -295,13 +294,12 @@ func BenchmarkSetGVKs(b *testing.B) {
 func BenchmarkGetAllGVKs(b *testing.B) {
 	tracker := NewTracker()
 	// Add 100 addons with 5 GVKs each
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		uid := types.UID(string(rune('a' + i)))
 		tracker.SetGVKs(uid, NewGVKSet(gvkDeployment, gvkSecret, gvkConfigMap, gvkCert))
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = tracker.GetAllGVKs()
 	}
 }

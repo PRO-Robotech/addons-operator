@@ -18,6 +18,7 @@ package criteria
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -72,6 +73,7 @@ func EvalEqual(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 // EvalNotEqual compares two values for inequality.
 func EvalNotEqual(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 	eq, err := EvalEqual(actual, expected)
+
 	return !eq, err
 }
 
@@ -91,12 +93,14 @@ func EvalIn(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 			return true, nil
 		}
 	}
+
 	return false, nil
 }
 
 // EvalNotIn checks if actual value is not in the expected list.
 func EvalNotIn(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 	in, err := EvalIn(actual, expected)
+
 	return !in, err
 }
 
@@ -110,6 +114,7 @@ func EvalGreaterThan(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	return a > e, nil
 }
 
@@ -123,6 +128,7 @@ func EvalGreaterOrEqual(actual any, expected *apiextensionsv1.JSON) (bool, error
 	if err != nil {
 		return false, err
 	}
+
 	return a >= e, nil
 }
 
@@ -136,6 +142,7 @@ func EvalLessThan(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	return a < e, nil
 }
 
@@ -149,6 +156,7 @@ func EvalLessOrEqual(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	return a <= e, nil
 }
 
@@ -186,12 +194,13 @@ func EvalMatches(actual any, expected *apiextensionsv1.JSON) (bool, error) {
 
 func parseJSON(j *apiextensionsv1.JSON) (any, error) {
 	if j == nil || len(j.Raw) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil input legitimately produces nil value with no error
 	}
 	var v any
 	if err := json.Unmarshal(j.Raw, &v); err != nil {
 		return nil, err
 	}
+
 	return v, nil
 }
 
@@ -202,9 +211,13 @@ func parseStringValue(j *apiextensionsv1.JSON) (string, error) {
 	}
 	var s string
 	if err := json.Unmarshal(j.Raw, &s); err != nil {
-		// Try as raw string without quotes
-		return strings.Trim(string(j.Raw), "\""), nil
+		// Unmarshal failed — treat raw bytes as a literal string (e.g. unquoted value).
+		// This is intentional fallback, not an ignored error.
+		raw := strings.Trim(string(j.Raw), "\"")
+
+		return raw, nil //nolint:nilerr // intentional fallback to raw string when JSON parsing fails
 	}
+
 	return s, nil
 }
 
@@ -225,6 +238,7 @@ func toFloat64(v any) (float64, bool) {
 		if err != nil {
 			return 0, false
 		}
+
 		return f, true
 	default:
 		return 0, false
@@ -233,7 +247,7 @@ func toFloat64(v any) (float64, bool) {
 
 func expectedToFloat64(expected *apiextensionsv1.JSON) (float64, error) {
 	if expected == nil || len(expected.Raw) == 0 {
-		return 0, fmt.Errorf("expected value is required for numeric comparison")
+		return 0, errors.New("expected value is required for numeric comparison")
 	}
 
 	var v any
@@ -243,8 +257,9 @@ func expectedToFloat64(expected *apiextensionsv1.JSON) (float64, error) {
 
 	f, ok := toFloat64(v)
 	if !ok {
-		return 0, fmt.Errorf("expected value is not a number")
+		return 0, errors.New("expected value is not a number")
 	}
+
 	return f, nil
 }
 
@@ -258,5 +273,6 @@ func deepEqual(a, b any) bool {
 	if aOk && bOk {
 		return aFloat == bFloat
 	}
+
 	return false
 }

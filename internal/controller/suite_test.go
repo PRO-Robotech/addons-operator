@@ -39,6 +39,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	addonctrl "addons-operator/internal/controller/addon"
+	addonclaimctrl "addons-operator/internal/controller/addonclaim"
+	addonphasectrl "addons-operator/internal/controller/addonphase"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -121,6 +124,12 @@ var _ = BeforeSuite(func() {
 	}
 	_ = k8sClient.Create(ctx, defaultNs) // Ignore error if already exists
 
+	// Create tenant namespace for addonclaim tests
+	tenantNs := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant-test"},
+	}
+	_ = k8sClient.Create(ctx, tenantNs) // Ignore error if already exists
+
 	// Start controller manager
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
@@ -131,7 +140,7 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Setup Addon controller
-	err = (&AddonReconciler{
+	err = (&addonctrl.AddonReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addon-controller"),
@@ -139,10 +148,18 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	// Setup AddonPhase controller
-	err = (&AddonPhaseReconciler{
+	err = (&addonphasectrl.AddonPhaseReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Recorder: mgr.GetEventRecorderFor("addonphase-controller"),
+	}).SetupWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Setup AddonClaim controller
+	err = (&addonclaimctrl.Reconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("addonclaim-controller"),
 	}).SetupWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
@@ -174,6 +191,7 @@ func getFirstFoundEnvTestBinaryDir() string {
 	entries, err := os.ReadDir(basePath)
 	if err != nil {
 		logf.Log.Error(err, "Failed to read directory", "path", basePath)
+
 		return ""
 	}
 	for _, entry := range entries {
@@ -181,5 +199,6 @@ func getFirstFoundEnvTestBinaryDir() string {
 			return filepath.Join(basePath, entry.Name())
 		}
 	}
+
 	return ""
 }

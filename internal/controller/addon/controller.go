@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package addon
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,15 +48,16 @@ import (
 )
 
 const (
-	requeueIntervalDegraded  = 60 * time.Second
-	requeueIntervalStabilize = 1 * time.Second
-	finalizerName            = "addons.in-cloud.io/finalizer"
-	addonLabelKey            = "addons.in-cloud.io/addon"
-	valuesSourcesIndexKey    = "spec.valuesSources.sourceRef"
-	dependencyIndexKey       = "spec.initDependencies.name"
-	setupTimeout             = 30 * time.Second
-	pauseAnnotationKey       = "addons.in-cloud.io/paused"
-	pauseAnnotationValueTrue = "true"
+	requeueIntervalDegraded   = 60 * time.Second
+	requeueIntervalStabilize  = 1 * time.Second
+	requeueIntervalDeleteWait = 5 * time.Second
+	finalizerName             = "addons.in-cloud.io/finalizer"
+	addonLabelKey             = "addons.in-cloud.io/addon"
+	valuesSourcesIndexKey     = "spec.valuesSources.sourceRef"
+	dependencyIndexKey        = "spec.initDependencies.name"
+	setupTimeout              = 30 * time.Second
+	pauseAnnotationKey        = "addons.in-cloud.io/paused"
+	pauseAnnotationValueTrue  = "true"
 )
 
 // AddonReconciler reconciles Addon objects.
@@ -83,6 +85,7 @@ type AddonReconciler struct {
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups="*",resources="*",verbs=get;list;watch
 
+//nolint:gocognit,gocyclo,funlen // reconciliation loop with inherent branching complexity
 func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -91,8 +94,11 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
+
 		return ctrl.Result{}, err
 	}
+
+	oldStatus := addon.Status.DeepCopy()
 
 	cm := conditions.NewManager(&addon.Status.Conditions, addon.Generation)
 	cm.EnsureAllConditions()
@@ -107,6 +113,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	if !addon.DeletionTimestamp.IsZero() {
 		cm.SetProgressing(conditions.ReasonDeleting, conditions.ReasonDeleting, "Addon is being deleted")
+
 		return r.reconcileDelete(ctx, addon)
 	}
 
@@ -119,7 +126,8 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		logger.Info("Addon is paused, skipping reconciliation")
 		cm.SetCondition(conditions.TypeReady, false, conditions.ReasonPaused, "Reconciliation is paused")
 		cm.SetCondition(conditions.TypeProgressing, false, conditions.ReasonPaused, "Reconciliation is paused")
-		return r.updateStatus(ctx, addon, cm)
+
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 
 	dependenciesMet, err := r.checkDependencies(ctx, addon)
@@ -127,13 +135,15 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		logger.Error(nil, "Failed to check dependencies", "addon", addon.Name, "reason", err.Error())
 		cm.SetOperationalCondition(conditions.TypeDependenciesMet, false, "DependencyCheckFailed", err.Error())
 		cm.SetProgressing(conditions.ReasonDependenciesNotMet, conditions.ReasonWaitingForDependency, "Failed to check dependencies")
-		return r.updateStatus(ctx, addon, cm)
+
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 	if !dependenciesMet {
 		logger.V(1).Info("Waiting for dependencies")
 		cm.SetOperationalCondition(conditions.TypeDependenciesMet, false, conditions.ReasonWaitingForDependency, "One or more dependencies are not ready")
 		cm.SetProgressing(conditions.ReasonDependenciesNotMet, conditions.ReasonWaitingForDependency, "Waiting for dependencies")
-		return r.updateStatus(ctx, addon, cm)
+
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 	cm.SetOperationalCondition(conditions.TypeDependenciesMet, true, "AllDependenciesMet", "All dependencies are satisfied")
 
@@ -142,7 +152,8 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		logger.Error(nil, "Failed to extract values sources", "addon", addon.Name, "reason", err.Error())
 		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonValueSourceError, err.Error())
 		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonValueSourceError, "Failed to extract values from sources")
-		return r.updateStatus(ctx, addon, cm)
+
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 
 	tmplCtx := sources.TemplateContext{
@@ -155,7 +166,8 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		logger.Error(nil, "Failed to aggregate values", "addon", addon.Name, "reason", err.Error())
 		cm.SetOperationalCondition(conditions.TypeValuesResolved, false, conditions.ReasonTemplateError, err.Error())
 		cm.SetDegraded(conditions.ReasonValuesNotResolved, conditions.ReasonTemplateError, "Failed to aggregate and render AddonValues")
-		return r.updateStatus(ctx, addon, cm)
+
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 
 	previousHash := addon.Status.ValuesHash
@@ -175,14 +187,16 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetProgressing(conditions.ReasonWaitingForStableValues,
 			conditions.ReasonWaitingForStableValues,
 			"Waiting for values to stabilize before creating Application")
-		return r.updateStatusAndRequeue(ctx, addon, cm, requeueIntervalStabilize)
+
+		return r.updateStatusAndRequeue(ctx, addon, cm, oldStatus, requeueIntervalStabilize)
 	}
 
 	if err := r.reconcileApplication(ctx, addon, finalValues); err != nil {
 		logger.Error(nil, "Failed to reconcile Application", "addon", addon.Name, "reason", err.Error())
 		cm.SetOperationalCondition(conditions.TypeApplicationCreated, false, conditions.ReasonApplicationError, err.Error())
 		cm.SetDegraded(conditions.ReasonApplicationFailed, conditions.ReasonApplicationError, "Failed to create/update ArgoCD Application")
-		return r.updateStatus(ctx, addon, cm)
+
+		return r.updateStatus(ctx, addon, cm, oldStatus)
 	}
 	cm.SetOperationalCondition(conditions.TypeApplicationCreated, true, "ApplicationCreated", "Argo CD Application created/updated")
 
@@ -193,6 +207,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if cm.IsConditionTrue(conditions.TypeSynced) && cm.IsConditionTrue(conditions.TypeHealthy) {
 		cm.SetReady(conditions.ReasonFullyReconciled, "Addon is fully reconciled and healthy")
 		addon.Status.Deployed = true
+		cm.SetCondition(conditions.TypeDeployed, true, "Deployed", "Addon has been successfully deployed")
 	} else if !cm.IsDegraded() {
 		reason := conditions.ReasonWaitingForSync
 		message := "Waiting for Application to sync"
@@ -203,7 +218,7 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		cm.SetProgressing(conditions.ReasonNotSynced, reason, message)
 	}
 
-	return r.updateStatus(ctx, addon, cm)
+	return r.updateStatus(ctx, addon, cm, oldStatus)
 }
 
 func (r *AddonReconciler) reconcileDelete(ctx context.Context, addon *addonsv1alpha1.Addon) (ctrl.Result, error) {
@@ -213,32 +228,51 @@ func (r *AddonReconciler) reconcileDelete(ctx context.Context, addon *addonsv1al
 	// Cleanup dynamic watches for this Addon
 	r.cleanupWatchesForAddon(addon)
 
-	if controllerutil.ContainsFinalizer(addon, finalizerName) {
-		// Explicitly delete ArgoCD Application for reliability
-		// (OwnerReference may not work for cross-namespace resources)
-		argoApp := &argocdv1alpha1.Application{}
-		argoApp.Name = addon.Name
-		argoApp.Namespace = addon.Spec.Backend.Namespace
+	if !controllerutil.ContainsFinalizer(addon, finalizerName) {
+		return ctrl.Result{}, nil
+	}
 
-		if err := r.Delete(ctx, argoApp); client.IgnoreNotFound(err) != nil {
-			logger.Error(err, "Failed to delete ArgoCD Application", "name", argoApp.Name, "namespace", argoApp.Namespace)
-			return ctrl.Result{}, err
-		}
-		logger.Info("Deleted ArgoCD Application", "name", argoApp.Name, "namespace", argoApp.Namespace)
+	// Explicitly delete ArgoCD Application for reliability
+	// (OwnerReference may not work for cross-namespace resources)
+	argoApp := &argocdv1alpha1.Application{}
+	argoApp.Name = addon.Name
+	argoApp.Namespace = addon.Spec.Backend.Namespace
 
-		// Remove finalizer after cleanup
-		addonKey := client.ObjectKeyFromObject(addon)
-		err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			fresh := &addonsv1alpha1.Addon{}
-			if getErr := r.Get(ctx, addonKey, fresh); getErr != nil {
-				return getErr
-			}
-			controllerutil.RemoveFinalizer(fresh, finalizerName)
-			return r.Update(ctx, fresh)
-		})
-		if err != nil {
-			return ctrl.Result{}, err
+	if err := r.Delete(ctx, argoApp); client.IgnoreNotFound(err) != nil {
+		logger.Error(err, "Failed to delete ArgoCD Application", "name", argoApp.Name, "namespace", argoApp.Namespace)
+
+		return ctrl.Result{}, err
+	}
+
+	// Wait for Application to be fully deleted (ArgoCD may have its own finalizer)
+	existing := &argocdv1alpha1.Application{}
+	err := r.Get(ctx, types.NamespacedName{Name: argoApp.Name, Namespace: argoApp.Namespace}, existing)
+
+	switch {
+	case err == nil:
+		logger.Info("Waiting for ArgoCD Application to be fully deleted",
+			"name", argoApp.Name, "namespace", argoApp.Namespace)
+
+		return ctrl.Result{RequeueAfter: requeueIntervalDeleteWait}, nil
+	case !apierrors.IsNotFound(err):
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("ArgoCD Application deleted", "name", argoApp.Name, "namespace", argoApp.Namespace)
+
+	// Remove finalizer after Application is fully gone
+	addonKey := client.ObjectKeyFromObject(addon)
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &addonsv1alpha1.Addon{}
+		if getErr := r.Get(ctx, addonKey, fresh); getErr != nil {
+			return getErr
 		}
+		controllerutil.RemoveFinalizer(fresh, finalizerName)
+
+		return r.Update(ctx, fresh)
+	})
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{}, nil
@@ -247,6 +281,7 @@ func (r *AddonReconciler) reconcileDelete(ctx context.Context, addon *addonsv1al
 func (r *AddonReconciler) ensureFinalizer(ctx context.Context, addon *addonsv1alpha1.Addon) error {
 	if !controllerutil.ContainsFinalizer(addon, finalizerName) {
 		addonKey := client.ObjectKeyFromObject(addon)
+
 		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 			fresh := &addonsv1alpha1.Addon{}
 			if err := r.Get(ctx, addonKey, fresh); err != nil {
@@ -256,9 +291,11 @@ func (r *AddonReconciler) ensureFinalizer(ctx context.Context, addon *addonsv1al
 				return nil
 			}
 			controllerutil.AddFinalizer(fresh, finalizerName)
+
 			return r.Update(ctx, fresh)
 		})
 	}
+
 	return nil
 }
 
@@ -268,11 +305,13 @@ func (r *AddonReconciler) checkDependencies(ctx context.Context, addon *addonsv1
 	if err != nil {
 		return false, err
 	}
+
 	return result.Satisfied, nil
 }
 
 func (r *AddonReconciler) aggregateValues(ctx context.Context, addon *addonsv1alpha1.Addon, tmplCtx sources.TemplateContext) (map[string]any, error) {
 	aggregator := values.NewAggregator(r.Client, r.templateEngine)
+
 	return aggregator.AggregateValues(ctx, addon, tmplCtx)
 }
 
@@ -300,6 +339,7 @@ func (r *AddonReconciler) applicationExists(ctx context.Context, addon *addonsv1
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
+
 	return err == nil, err
 }
 
@@ -312,7 +352,7 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 	existing := &argocdv1alpha1.Application{}
 	err := r.Get(ctx, appKey, existing)
 
-	if apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) { //nolint:nestif // create-or-update pattern
 		app, buildErr := builder.Build(addon, appNamespace, helmValues)
 		if buildErr != nil {
 			return buildErr
@@ -325,6 +365,7 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 			}
 			r.Recorder.Eventf(addon, "Warning", "ApplicationCreateFailed",
 				"Failed to create Application %s/%s: %v", app.Namespace, app.Name, createErr)
+
 			return createErr
 		}
 
@@ -332,6 +373,7 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 			"Created Application %s/%s", app.Namespace, app.Name)
 
 		addon.Status.ApplicationRef = builder.GetApplicationRef(addon, appNamespace)
+
 		return nil
 	}
 
@@ -346,6 +388,7 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 
 	if !needsUpdate {
 		addon.Status.ApplicationRef = builder.GetApplicationRef(addon, appNamespace)
+
 		return nil
 	}
 
@@ -367,6 +410,7 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 	if updateErr != nil {
 		r.Recorder.Eventf(addon, "Warning", "ApplicationUpdateFailed",
 			"Failed to update Application %s/%s: %v", appNamespace, addon.Name, updateErr)
+
 		return updateErr
 	}
 
@@ -375,6 +419,7 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 		"Updated Application %s/%s", appNamespace, addon.Name)
 
 	addon.Status.ApplicationRef = builder.GetApplicationRef(addon, appNamespace)
+
 	return nil
 }
 
@@ -387,6 +432,7 @@ func (r *AddonReconciler) translateApplicationStatus(ctx context.Context, addon 
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
+
 		return err
 	}
 
@@ -396,18 +442,22 @@ func (r *AddonReconciler) translateApplicationStatus(ctx context.Context, addon 
 	return nil
 }
 
-func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager) (ctrl.Result, error) {
+func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager, oldStatus *addonsv1alpha1.AddonStatus) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	addon.Status.ObservedGeneration = addon.Generation
 
-	if err := r.Status().Update(ctx, addon); err != nil {
-		if apierrors.IsConflict(err) {
-			logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
-			return ctrl.Result{Requeue: true}, nil
+	if !apiequality.Semantic.DeepEqual(oldStatus, &addon.Status) {
+		if err := r.Status().Update(ctx, addon); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
+
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to update Addon status")
+
+			return ctrl.Result{}, err
 		}
-		logger.Error(err, "Failed to update Addon status")
-		return ctrl.Result{}, err
 	}
 
 	if cm.IsDegraded() {
@@ -419,23 +469,28 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 
 // updateStatusAndRequeue updates status and returns a requeue result with the specified interval.
 // This is used when the controller needs to wait before proceeding (e.g., stabilization gate).
-func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, _ *conditions.Manager, interval time.Duration) (ctrl.Result, error) {
+func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *addonsv1alpha1.Addon, _ *conditions.Manager, oldStatus *addonsv1alpha1.AddonStatus, interval time.Duration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	addon.Status.ObservedGeneration = addon.Generation
 
-	if err := r.Status().Update(ctx, addon); err != nil {
-		if apierrors.IsConflict(err) {
-			logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
-			return ctrl.Result{Requeue: true}, nil
+	if !apiequality.Semantic.DeepEqual(oldStatus, &addon.Status) {
+		if err := r.Status().Update(ctx, addon); err != nil {
+			if apierrors.IsConflict(err) {
+				logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
+
+				return ctrl.Result{Requeue: true}, nil
+			}
+			logger.Error(err, "Failed to update Addon status")
+
+			return ctrl.Result{}, err
 		}
-		logger.Error(err, "Failed to update Addon status")
-		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: interval}, nil
 }
 
+//nolint:funlen,gocognit,gocyclo // index setup requires sequential field indexer registrations
 func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
 	defer cancel()
@@ -451,10 +506,14 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		&addonsv1alpha1.AddonValue{},
 		addonLabelKey,
 		func(obj client.Object) []string {
-			av := obj.(*addonsv1alpha1.AddonValue)
-			if addon, ok := av.Labels[addonLabelKey]; ok {
+			av, ok := obj.(*addonsv1alpha1.AddonValue)
+			if !ok {
+				return nil
+			}
+			if addon, hasLabel := av.Labels[addonLabelKey]; hasLabel {
 				return []string{addon}
 			}
+
 			return nil
 		},
 	); err != nil {
@@ -466,8 +525,8 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		&addonsv1alpha1.Addon{},
 		valuesSourcesIndexKey,
 		func(obj client.Object) []string {
-			addon := obj.(*addonsv1alpha1.Addon)
-			if len(addon.Spec.ValuesSources) == 0 {
+			addon, ok := obj.(*addonsv1alpha1.Addon)
+			if !ok || len(addon.Spec.ValuesSources) == 0 {
 				return nil
 			}
 
@@ -476,6 +535,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				key := sources.SourceRefKey(source.SourceRef)
 				keys = append(keys, key)
 			}
+
 			return keys
 		},
 	); err != nil {
@@ -488,8 +548,8 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		&addonsv1alpha1.Addon{},
 		dependencyIndexKey,
 		func(obj client.Object) []string {
-			addon := obj.(*addonsv1alpha1.Addon)
-			if len(addon.Spec.InitDependencies) == 0 {
+			addon, ok := obj.(*addonsv1alpha1.Addon)
+			if !ok || len(addon.Spec.InitDependencies) == 0 {
 				return nil
 			}
 
@@ -497,6 +557,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			for _, dep := range addon.Spec.InitDependencies {
 				deps = append(deps, dep.Name)
 			}
+
 			return deps
 		},
 	); err != nil {
@@ -509,7 +570,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&argocdv1alpha1.Application{}).
 		Watches(
 			&addonsv1alpha1.AddonValue{},
-			handler.EnqueueRequestsFromMapFunc(r.findAddonsForAddonValue),
+			handler.EnqueueRequestsFromMapFunc(r.FindAddonsForAddonValue),
 		).
 		Watches(
 			&addonsv1alpha1.Addon{},
@@ -544,7 +605,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return nil
 }
 
-func (r *AddonReconciler) findAddonsForAddonValue(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *AddonReconciler) FindAddonsForAddonValue(ctx context.Context, obj client.Object) []reconcile.Request {
 	av, ok := obj.(*addonsv1alpha1.AddonValue)
 	if !ok {
 		return nil
@@ -563,6 +624,7 @@ func (r *AddonReconciler) findAddonsForAddonValue(ctx context.Context, obj clien
 			})
 		}
 	}
+
 	return requests
 }
 
@@ -574,6 +636,7 @@ func addonMatchesValue(addon *addonsv1alpha1.Addon, av *addonsv1alpha1.AddonValu
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -583,6 +646,7 @@ func collectAllSelectors(addon *addonsv1alpha1.Addon) []addonsv1alpha1.ValuesSel
 		len(addon.Spec.ValuesSelectors)+len(addon.Status.PhaseValuesSelector))
 	result = append(result, addon.Spec.ValuesSelectors...)
 	result = append(result, addon.Status.PhaseValuesSelector...)
+
 	return result
 }
 
@@ -622,6 +686,7 @@ func (r *AddonReconciler) extractValuesSources(ctx context.Context, addon *addon
 	}
 
 	extractor := sources.NewExtractor(r.Client)
+
 	return extractor.Extract(ctx, addon.Spec.ValuesSources)
 }
 

@@ -27,9 +27,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	"go.uber.org/zap/zapcore"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -41,8 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
-	"addons-operator/internal/controller"
-	"addons-operator/internal/health"
+	"addons-operator/internal/controller/addonclaim"
 	webhookv1alpha1 "addons-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -61,8 +58,6 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(addonsv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(argocdv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -71,9 +66,8 @@ func setupWebhooks(mgr ctrl.Manager) error {
 		name  string
 		setup func(ctrl.Manager) error
 	}{
-		{"Addon", webhookv1alpha1.SetupAddonWebhookWithManager},
-		{"AddonPhase", webhookv1alpha1.SetupAddonPhaseWebhookWithManager},
-		{"AddonValue", webhookv1alpha1.SetupAddonValueWebhookWithManager},
+		{"AddonClaim", webhookv1alpha1.SetupAddonClaimWebhookWithManager},
+		{"AddonTemplate", webhookv1alpha1.SetupAddonTemplateWebhookWithManager},
 	}
 
 	for _, wh := range webhooks {
@@ -82,10 +76,11 @@ func setupWebhooks(mgr ctrl.Manager) error {
 		}
 		setupLog.Info("webhook registered", "webhook", wh.name)
 	}
+
 	return nil
 }
 
-// nolint:gocyclo
+//nolint:funlen // standard kubebuilder main with flag parsing
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -95,6 +90,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var gracefulShutdownTimeout time.Duration
+	var pollingInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -115,6 +111,8 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", defaultGracefulShutdownTimeout,
 		"Timeout for graceful shutdown of the manager")
+	flag.DurationVar(&pollingInterval, "polling-interval", addonclaim.DefaultPollingInterval,
+		"Interval between polling remote Addon status")
 	opts := zap.Options{
 		Development: true,
 		// Only add stack traces for panic level logs
@@ -179,11 +177,6 @@ func main() {
 	// If the certificate is not specified, controller-runtime will automatically
 	// generate self-signed certificates for the metrics server. While convenient for development and testing,
 	// this setup is not recommended for production.
-	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
-	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
-	// managed by cert-manager for the metrics server.
-	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
 	if len(metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
@@ -199,7 +192,7 @@ func main() {
 		WebhookServer:           webhookServer,
 		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
-		LeaderElectionID:        "0b6c7a93.in-cloud.io",
+		LeaderElectionID:        "addonclaim-controller.in-cloud.io",
 		GracefulShutdownTimeout: &gracefulShutdownTimeout,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
@@ -218,20 +211,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AddonReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("addon-controller"),
+	if err := (&addonclaim.Reconciler{
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Recorder:        mgr.GetEventRecorderFor("addonclaim-controller"),
+		PollingInterval: pollingInterval,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Addon")
-		os.Exit(1)
-	}
-	if err := (&controller.AddonPhaseReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("addonphase-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AddonPhase")
+		setupLog.Error(err, "unable to create controller", "controller", "AddonClaim")
 		os.Exit(1)
 	}
 	if os.Getenv(envEnableWebhooks) != "false" {
@@ -248,10 +234,6 @@ func main() {
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("argocd-crd", health.CheckArgoCDCRD(mgr.GetAPIReader())); err != nil {
-		setupLog.Error(err, "unable to set up ArgoCD CRD ready check")
 		os.Exit(1)
 	}
 

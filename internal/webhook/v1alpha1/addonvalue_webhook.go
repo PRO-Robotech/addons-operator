@@ -86,6 +86,7 @@ func validateAddonValue(addonvalue *addonsv1alpha1.AddonValue) admission.Warning
 
 	if addonvalue.Labels == nil {
 		warnings = append(warnings, "missing labels for matching: AddonValue without labels won't be selected by any Addon")
+
 		return warnings
 	}
 

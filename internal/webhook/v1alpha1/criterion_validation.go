@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -48,6 +49,8 @@ var operatorsForbiddingValue = map[addonsv1alpha1.CriterionOperator]bool{
 
 // validateCriterion validates a single Criterion's operator+value consistency
 // and source field constraints.
+//
+//nolint:gocyclo // validation of multiple operator constraints
 func validateCriterion(criterion addonsv1alpha1.Criterion, path string) error {
 	if operatorsRequiringValue[criterion.Operator] && criterion.Value == nil {
 		return fmt.Errorf("%s: operator %s requires a value", path, criterion.Operator)
@@ -89,6 +92,7 @@ func validateCriterionSource(source *addonsv1alpha1.CriterionSource, path string
 	if source.Name == "" && source.LabelSelector == nil {
 		return fmt.Errorf("%s: source must specify either name or labelSelector", path)
 	}
+
 	return nil
 }
 
@@ -100,6 +104,7 @@ func validateCriteria(criteria []addonsv1alpha1.Criterion, pathPrefix string) er
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -117,12 +122,9 @@ func validateKeepImmutability(oldPhase, newPhase *addonsv1alpha1.AddonPhase) err
 			continue
 		}
 
-		minLen := len(oldRule.Criteria)
-		if len(newRule.Criteria) < minLen {
-			minLen = len(newRule.Criteria)
-		}
+		minLen := min(len(newRule.Criteria), len(oldRule.Criteria))
 
-		for i := 0; i < minLen; i++ {
+		for i := range minLen {
 			oldEffective := effectiveKeep(oldRule.Criteria[i].Keep)
 			newEffective := effectiveKeep(newRule.Criteria[i].Keep)
 			if oldEffective != newEffective {
@@ -139,17 +141,19 @@ func effectiveKeep(keep *bool) bool {
 	if keep == nil {
 		return true
 	}
+
 	return *keep
 }
 
 // extractStringValue extracts a string from apiextensionsv1.JSON.
 func extractStringValue(j *apiextensionsv1.JSON) (string, error) {
 	if j == nil || len(j.Raw) == 0 {
-		return "", fmt.Errorf("empty value")
+		return "", errors.New("empty value")
 	}
 	var s string
 	if err := json.Unmarshal(j.Raw, &s); err != nil {
 		return "", err
 	}
+
 	return s, nil
 }

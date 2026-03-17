@@ -125,6 +125,7 @@ type templateCache struct {
 func newTemplateCache() *templateCache {
 	// LRU cache is thread-safe, no need for separate mutex
 	cache, _ := lru.New[string, *template.Template](defaultTemplateCacheSize)
+
 	return &templateCache{
 		cache: cache,
 	}
@@ -147,6 +148,7 @@ func (c *templateCache) getOrParse(content string) (*template.Template, error) {
 
 	// Add to cache (evicts LRU entry if at capacity)
 	c.cache.Add(key, tmpl)
+
 	return tmpl, nil
 }
 

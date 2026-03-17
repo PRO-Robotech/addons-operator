@@ -47,7 +47,6 @@ func (e *RuleEvaluator) EvaluateRules(
 	phase *addonsv1alpha1.AddonPhase,
 	targetAddon *addonsv1alpha1.Addon,
 ) ([]addonsv1alpha1.RuleStatus, []addonsv1alpha1.ValuesSelector, error) {
-
 	previousStatuses := buildPreviousStatusMap(phase)
 	ruleStatuses := make([]addonsv1alpha1.RuleStatus, 0, len(phase.Spec.Rules))
 	activeSelectors := make([]addonsv1alpha1.ValuesSelector, 0, len(phase.Spec.Rules))
@@ -62,12 +61,19 @@ func (e *RuleEvaluator) EvaluateRules(
 
 		latched := matched && hasKeepableCriteria(rule)
 
+		lastEvaluated := metav1.Now()
+		if prev.Name != "" && prev.Matched == matched &&
+			prev.Latched == latched &&
+			prev.Message == message {
+			lastEvaluated = prev.LastEvaluated
+		}
+
 		ruleStatuses = append(ruleStatuses, addonsv1alpha1.RuleStatus{
 			Name:          rule.Name,
 			Matched:       matched,
 			Latched:       latched,
 			Message:       message,
-			LastEvaluated: metav1.Now(),
+			LastEvaluated: lastEvaluated,
 		})
 
 		if matched {
@@ -83,6 +89,7 @@ func buildPreviousStatusMap(phase *addonsv1alpha1.AddonPhase) map[string]addonsv
 	for _, rs := range phase.Status.RuleStatuses {
 		m[rs.Name] = rs
 	}
+
 	return m
 }
 
@@ -92,6 +99,7 @@ func hasKeepableCriteria(rule addonsv1alpha1.PhaseRule) bool {
 			return true
 		}
 	}
+
 	return len(rule.Criteria) == 0
 }
 
@@ -126,6 +134,7 @@ func (e *RuleEvaluator) evaluateRule(
 	return true, "All conditions satisfied", nil
 }
 
+//nolint:gocyclo,nestif // criterion evaluation with source resolution branching
 func (e *RuleEvaluator) evaluateCriterion(
 	ctx context.Context,
 	criterion addonsv1alpha1.Criterion,
@@ -148,6 +157,7 @@ func (e *RuleEvaluator) evaluateCriterion(
 			if apierrors.IsNotFound(err) {
 				return false, fmt.Sprintf("Resource %s/%s not found", criterion.Source.Kind, criterion.Source.Name), nil
 			}
+
 			return false, "", fmt.Errorf("get resource %s/%s: %w", criterion.Source.Kind, criterion.Source.Name, err)
 		}
 		obj = u.Object
@@ -176,6 +186,7 @@ func (e *RuleEvaluator) evaluateCriterion(
 		if criterion.Operator == addonsv1alpha1.OperatorExists {
 			return false, fmt.Sprintf("Path %s does not exist", criterion.JSONPath), nil
 		}
+
 		return false, fmt.Sprintf("Path %s not found", criterion.JSONPath), nil
 	}
 
@@ -189,6 +200,7 @@ func (e *RuleEvaluator) evaluateCriterion(
 		if criterion.Value != nil {
 			expectedValue = string(criterion.Value.Raw)
 		}
+
 		return false, fmt.Sprintf("Criterion not met: %s %s %s (actual: %v)",
 			criterion.JSONPath, criterion.Operator, expectedValue, actualValue), nil
 	}

@@ -99,7 +99,7 @@ func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string
 		},
 	}
 
-	if addon.Spec.Finalizer != nil && *addon.Spec.Finalizer {
+	if addon.Spec.Backend.Finalizer != nil && *addon.Spec.Backend.Finalizer {
 		app.Finalizers = []string{argocdResourcesFinalizer}
 	}
 
@@ -113,6 +113,7 @@ func buildHelmSource(valuesYAML string, releaseName string) *argocdv1alpha1.Appl
 	if releaseName != "" {
 		helm.ReleaseName = releaseName
 	}
+
 	return helm
 }
 
@@ -129,6 +130,7 @@ func buildPluginSource(pluginName string, releaseName string, valuesYAML []byte)
 			Value: releaseName,
 		})
 	}
+
 	return &argocdv1alpha1.ApplicationSourcePlugin{
 		Name: pluginName,
 		Env:  env,
@@ -139,6 +141,7 @@ func (b *ApplicationBuilder) getProject(addon *addonsv1alpha1.Addon) string {
 	if addon.Spec.Backend.Project != "" {
 		return addon.Spec.Backend.Project
 	}
+
 	return defaultProject
 }
 
@@ -210,6 +213,7 @@ func (b *ApplicationBuilder) getIgnoreDifferences(addon *addonsv1alpha1.Addon) [
 			ManagedFieldsManagers: diff.ManagedFieldsManagers,
 		}
 	}
+
 	return result
 }
 
@@ -332,6 +336,7 @@ func (b *ApplicationBuilder) needsHelmUpdate(existing, desired *argocdv1alpha1.A
 	if existing.ReleaseName != desired.ReleaseName {
 		return true, fmt.Sprintf("helm releaseName differs: existing=%q, desired=%q", existing.ReleaseName, desired.ReleaseName)
 	}
+
 	return false, ""
 }
 
@@ -349,5 +354,6 @@ func (b *ApplicationBuilder) needsPluginUpdate(existing, desired *argocdv1alpha1
 	if !existing.Equals(desired) {
 		return true, "plugin differs"
 	}
+
 	return false, ""
 }

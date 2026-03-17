@@ -298,6 +298,286 @@ INFO  pending watch still unavailable  {"gvk": "cert-manager.io/v1/Certificate"}
 
 **Решение:** Установите CRD (например, cert-manager) — Addon автоматически начнёт отслеживать ресурсы.
 
+### 11a. Addon долго не удаляется
+
+**Симптом:** Addon находится в состоянии `Terminating` длительное время.
+
+**Причина:** У ArgoCD Application установлен финализатор `resources-finalizer.argocd.argoproj.io` (через `spec.backend.finalizer: true`). ArgoCD удаляет все managed-ресурсы перед удалением Application, а контроллер Addon ждёт завершения этого процесса.
+
+**Диагностика:**
+```bash
+# Проверить, существует ли Application
+kubectl get application -n argocd <addon-name>
+
+# Посмотреть финализаторы Application
+kubectl get application -n argocd <addon-name> -o jsonpath='{.metadata.finalizers}'
+
+# Логи контроллера
+kubectl logs -n addon-operator-system -l app=addon-controller | grep "Waiting for ArgoCD Application"
+```
+
+**Решение:**
+1. Подождите — ArgoCD удаляет ресурсы, это нормальный процесс
+2. Если Application зависла, проверьте логи ArgoCD:
+   ```bash
+   kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
+   ```
+3. В крайнем случае, удалите финализатор ArgoCD Application вручную:
+   ```bash
+   kubectl patch application -n argocd <name> --type merge \
+     -p '{"metadata":{"finalizers":null}}'
+   ```
+
+### 11b. CAPI поля не появляются в status AddonClaim
+
+**Симптом:** Поля `initialized`, `externalManagedControlPlane`, `version` отсутствуют в status AddonClaim.
+
+**Причина:** CAPI поля заполняются только при наличии аннотации `external-status/type: controlplane`.
+
+**Решение:**
+1. Добавьте аннотацию:
+   ```bash
+   kubectl annotate addonclaim <name> -n <namespace> external-status/type=controlplane
+   ```
+2. Дождитесь следующего reconcile (polling interval, по умолчанию 15s)
+3. Проверьте:
+   ```bash
+   kubectl get addonclaim <name> -n <namespace> -o jsonpath='{.status.initialized}'
+   ```
+
+**Примечание:** Webhook валидирует значение аннотации — единственное допустимое значение `controlplane`.
+
+### 11c. CAPI initialized=false хотя Addon развёрнут
+
+**Симптом:** `status.initialized=false` при `status.deployed=true`.
+
+**Причина:** `initialized` отражает поле `status.deployed` (latching bool) из remote Addon, а не condition `Ready`. Поле `deployed` устанавливается в `true` после первого успешного деплоя и не сбрасывается обратно.
+
+**Решение:**
+1. Проверьте поле `deployed` удалённого Addon:
+   ```bash
+   kubectl get addonclaim <name> -n <namespace> \
+     -o jsonpath='{.status.remoteAddonStatus.deployed}'
+   ```
+2. Убедитесь, что значение `true`.
+
+### 11d. Невозможно изменить spec.addon.name
+
+**Симптом:**
+```
+Error: admission webhook "vaddonclaim-v1alpha1.kb.io" denied the request:
+spec.addon.name is immutable
+```
+
+Или CEL validation:
+```
+The AddonClaim "cilium" is invalid: spec: Invalid value: "object": spec.addon.name is immutable
+```
+
+**Причина:** Поле `spec.addon.name` является **неизменяемым** после создания. Это защита от случайного переименования Addon в удалённом кластере, которое может создать осиротевшие ресурсы.
+
+**Решение:**
+
+Если действительно нужно изменить имя Addon:
+
+1. Удалите AddonClaim (контроллер автоматически удалит старый Addon из infra-кластера):
+   ```bash
+   kubectl delete addonclaim <name> -n <namespace>
+   ```
+2. Создайте новый AddonClaim с нужным `spec.addon.name`:
+   ```yaml
+   spec:
+     addon:
+       name: new-addon-name
+   ```
+
+### 11e. version пуст в CAPI status
+
+**Симптом:** `status.version` пуст при наличии аннотации `external-status/type`.
+
+**Причина:** `status.version` копируется из `spec.version`. Если поле `spec.version` не указано — `status.version` остаётся пустым.
+
+**Решение:** Убедитесь, что в AddonClaim указано поле `spec.version`:
+```yaml
+spec:
+  version: "1.28.0"
+```
+
+## AddonClaim
+
+### 12. SecretNotFound
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: RemoteConnected
+      status: "False"
+      reason: SecretNotFound
+      message: 'Secret "infra-kubeconfig" not found'
+    - type: Degraded
+      status: "True"
+      reason: SecretNotFound
+```
+
+**Причина:** Secret с kubeconfig не найден.
+
+**Решение:**
+1. Secret должен быть в том же namespace, что и AddonClaim:
+   ```bash
+   kubectl get secret infra-kubeconfig -n <addonclaim-namespace>
+   ```
+2. Создайте Secret, если отсутствует:
+   ```bash
+   kubectl create secret generic infra-kubeconfig \
+     --namespace=<addonclaim-namespace> \
+     --from-file=value=/path/to/kubeconfig
+   ```
+
+### 13. SecretInvalid
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: RemoteConnected
+      status: "False"
+      reason: SecretInvalid
+      message: 'Secret "infra-kubeconfig" missing key "value"'
+```
+
+**Причина:** Secret не содержит ключ `value` с kubeconfig.
+
+**Решение:**
+Secret должен содержать ключ `value`:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infra-kubeconfig
+type: Opaque
+data:
+  value: <base64-encoded kubeconfig>
+```
+
+### 14. TemplateNotFound
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: TemplateRendered
+      status: "False"
+      reason: TemplateNotFound
+      message: 'AddonTemplate "cilium-v1.17.4" not found'
+```
+
+**Причина:** AddonTemplate не существует.
+
+**Решение:**
+1. AddonTemplate — cluster-scoped ресурс, namespace не нужен:
+   ```bash
+   kubectl get addontemplate cilium-v1.17.4
+   ```
+2. Создайте AddonTemplate, если отсутствует.
+
+### 15. TemplateRenderFailed
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: TemplateRendered
+      status: "False"
+      reason: TemplateRenderFailed
+      message: "execute template: template: addon-template:3:15: ..."
+```
+
+**Причина:** Ошибка при рендеринге Go template.
+
+**Решение:**
+1. Проверьте синтаксис шаблона:
+   ```bash
+   kubectl get addontemplate <name> -o jsonpath='{.spec.template}'
+   ```
+2. Убедитесь, что используемые переменные существуют в контексте (`.Vars.<key>`, `.Values.spec.variables.<key>`, `.Values.metadata.name` и т.д.)
+3. При использовании `missingkey=error` все обращения к несуществующим ключам вызовут ошибку.
+
+### 16. RemoteClientFailed
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: RemoteConnected
+      status: "False"
+      reason: RemoteClientFailed
+```
+
+**Причина:** Kubeconfig в Secret невалиден или infra-кластер недоступен.
+
+**Решение:**
+1. Проверьте, что kubeconfig валиден:
+   ```bash
+   kubectl get secret infra-kubeconfig -n <ns> -o jsonpath='{.data.value}' | base64 -d > /tmp/kc.yaml
+   kubectl --kubeconfig=/tmp/kc.yaml cluster-info
+   ```
+2. Проверьте сетевую доступность infra-кластера из system-кластера.
+
+### 17. RemoteOperationFailed
+
+**Симптом:**
+```yaml
+status:
+  conditions:
+    - type: AddonSynced
+      status: "False"
+      reason: RemoteOperationFailed
+```
+
+**Причина:** Не удалось создать/обновить ресурсы в infra-кластере.
+
+**Решение:**
+1. Убедитесь, что CRD Addon и AddonValue установлены в infra-кластере:
+   ```bash
+   kubectl --kubeconfig=/path/to/infra-kubeconfig get crd addons.addons.in-cloud.io
+   kubectl --kubeconfig=/path/to/infra-kubeconfig get crd addonvalues.addons.in-cloud.io
+   ```
+2. Проверьте RBAC — ServiceAccount в kubeconfig должен иметь права на создание Addon и AddonValue.
+
+### 18. AddonClaim stuck в Progressing
+
+**Симптом:**
+```yaml
+status:
+  ready: false
+  conditions:
+    - type: Ready
+      status: "False"
+      reason: AddonNotReady
+    - type: Progressing
+      status: "True"
+      reason: Reconciling
+      message: "Waiting for remote Addon to become ready"
+    - type: AddonSynced
+      status: "True"
+      reason: Synced
+```
+
+**Причина:** Addon и AddonValue успешно синхронизированы, но удалённый Addon не переходит в Ready.
+
+**Решение:**
+1. Проверьте статус Addon в infra-кластере:
+   ```bash
+   kubectl --kubeconfig=/path/to/infra-kubeconfig get addon <name> -o yaml
+   ```
+2. Убедитесь, что addons-operator запущен в infra-кластере.
+3. Проверьте, что Argo CD работает в infra-кластере.
+4. Проверьте логи addonclaim-controller:
+   ```bash
+   kubectl logs -n addon-operator-system -l app=addonclaim-controller
+   ```
+
 ## Команды отладки
 
 ### Просмотр всех Addon
@@ -329,6 +609,23 @@ kubectl logs -n addon-operator-system -l app=addon-controller -f
 ```bash
 kubectl get application -n argocd <name> -o yaml
 argocd app get <name>
+```
+
+### Просмотр статуса AddonClaim
+
+```bash
+kubectl get addonclaim -n <namespace>
+kubectl get addonclaim <name> -n <namespace> -o yaml
+```
+
+### Проверка удалённого Addon из AddonClaim
+
+```bash
+# Получить имя аддона из spec (рекомендуется)
+kubectl get addonclaim <name> -n <namespace> -o jsonpath='{.spec.addon.name}'
+
+# Проверить Addon в infra-кластере
+kubectl --kubeconfig=/path/to/infra-kubeconfig get addon <addon-name> -o yaml
 ```
 
 ### Трассировка разрешения Values
@@ -408,6 +705,9 @@ make run ARGS="--zap-log-level=1"
 ```bash
 # Только логи addon-controller
 kubectl logs -n addon-operator-system -l app=addon-controller | grep "addon-controller"
+
+# Только логи addonclaim-controller
+kubectl logs -n addon-operator-system -l app=addonclaim-controller
 
 # Только логи dynamic watches
 kubectl logs -n addon-operator-system -l app=addon-controller | grep "dynamicwatch"
