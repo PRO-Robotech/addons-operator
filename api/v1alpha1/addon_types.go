@@ -39,7 +39,7 @@ type AddonSpec struct {
 
 	// RepoURL specifies the Helm repository URL.
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^https?://.*`
+	// +kubebuilder:validation:Pattern=`^(https?|oci)://.*`
 	// +kubebuilder:validation:MaxLength=2048
 	RepoURL string `json:"repoURL"`
 
