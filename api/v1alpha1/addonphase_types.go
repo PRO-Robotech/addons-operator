@@ -88,6 +88,12 @@ type RuleStatus struct {
 	// LastEvaluated is the timestamp of the last evaluation.
 	// +optional
 	LastEvaluated metav1.Time `json:"lastEvaluated,omitempty"`
+
+	// Deployed is a latching flag indicating that this rule was at least once
+	// matched while the linked Addon was successfully deployed. Once set to
+	// true, it is never cleared, even if the rule later stops matching.
+	// +optional
+	Deployed bool `json:"deployed,omitempty"`
 }
 
 // +kubebuilder:object:root=true
