@@ -19,10 +19,13 @@ package controller
 import (
 	"time"
 
+	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/gitops-engine/pkg/health"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
@@ -288,6 +291,200 @@ var _ = Describe("AddonPhase Controller", func() {
 
 				return p.ResourceVersion
 			}, 3*time.Second, 500*time.Millisecond).Should(Equal(rv))
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+	})
+
+	Context("Rule Deployed latching", func() {
+		It("should not set rule.Deployed until addon reaches Deployed state, then latch it", func() {
+			name := uniqueName("rule-deploy-latch")
+
+			By("Creating target Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Creating AddonPhase with always-active rule")
+			phase := &addonsv1alpha1.AddonPhase{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{
+						{
+							Name: "always-on",
+							Selector: addonsv1alpha1.ValuesSelector{
+								Name:        "phase-values",
+								Priority:    10,
+								MatchLabels: map[string]string{"deploy-latch": "test"},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, phase)).To(Succeed())
+
+			By("Waiting for rule to be matched")
+			waitForPhaseRuleMatched(name, "always-on", true)
+
+			By("Verifying rule.Deployed stays false while addon is not yet Deployed")
+			Consistently(func() bool {
+				p := &addonsv1alpha1.AddonPhase{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(phase), p); err != nil {
+					return true
+				}
+				for _, r := range p.Status.RuleStatuses {
+					if r.Name == "always-on" {
+						return r.Deployed
+					}
+				}
+
+				return false
+			}, 2*time.Second, 500*time.Millisecond).Should(BeFalse(),
+				"Deployed should remain false while addon has not been deployed")
+
+			By("Waiting for the ArgoCD Application to be created by the Addon controller")
+			waitForApplication(name, "argocd")
+
+			By("Flipping the Application to Synced+Healthy so Addon.Status.Deployed becomes true")
+			Eventually(func() error {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return err
+				}
+				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+				app.Status.Health.Status = health.HealthStatusHealthy
+
+				return k8sClient.Update(ctx, app)
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying Addon.Status.Deployed becomes true")
+			Eventually(func() bool {
+				a := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(addon), a); err != nil {
+					return false
+				}
+
+				return a.Status.Deployed
+			}, timeout, interval).Should(BeTrue())
+
+			By("Verifying rule.Deployed latches to true in the phase status")
+			Eventually(func() bool {
+				p := &addonsv1alpha1.AddonPhase{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(phase), p); err != nil {
+					return false
+				}
+				for _, r := range p.Status.RuleStatuses {
+					if r.Name == "always-on" {
+						return r.Deployed
+					}
+				}
+
+				return false
+			}, timeout, interval).Should(BeTrue())
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should not set rule.Deployed when rule does not match even if addon is Deployed", func() {
+			name := uniqueName("rule-deploy-nomatch")
+
+			By("Creating target Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Creating AddonPhase with a criterion that never matches")
+			phase := &addonsv1alpha1.AddonPhase{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{
+						{
+							Name: "never-on",
+							Criteria: []addonsv1alpha1.Criterion{{
+								JSONPath: "$.metadata.name",
+								Operator: addonsv1alpha1.OperatorEqual,
+								Value:    &apiextensionsv1.JSON{Raw: []byte(`"some-other-name"`)},
+							}},
+							Selector: addonsv1alpha1.ValuesSelector{
+								Name:        "never-values",
+								Priority:    10,
+								MatchLabels: map[string]string{"never": "true"},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, phase)).To(Succeed())
+
+			By("Waiting for rule to be NOT matched")
+			waitForPhaseRuleMatched(name, "never-on", false)
+
+			By("Flipping the Application to Synced+Healthy so Addon.Status.Deployed becomes true")
+			waitForApplication(name, "argocd")
+			Eventually(func() error {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return err
+				}
+				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+				app.Status.Health.Status = health.HealthStatusHealthy
+
+				return k8sClient.Update(ctx, app)
+			}, timeout, interval).Should(Succeed())
+
+			By("Waiting for Addon.Status.Deployed to become true")
+			Eventually(func() bool {
+				a := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(addon), a); err != nil {
+					return false
+				}
+
+				return a.Status.Deployed
+			}, timeout, interval).Should(BeTrue())
+
+			By("Verifying rule.Deployed stays false because rule.Matched is false")
+			Consistently(func() bool {
+				p := &addonsv1alpha1.AddonPhase{}
+				if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(phase), p); err != nil {
+					return true
+				}
+				for _, r := range p.Status.RuleStatuses {
+					if r.Name == "never-on" {
+						return r.Deployed
+					}
+				}
+
+				return false
+			}, 2*time.Second, 500*time.Millisecond).Should(BeFalse(),
+				"Deployed must not be set for unmatched rules")
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
