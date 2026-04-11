@@ -108,6 +108,14 @@ func (r *AddonPhaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.updateStatusAndRequeue(ctx, phase, oldStatus)
 	}
 
+	if addon.Status.Deployed {
+		for i := range ruleStatuses {
+			if ruleStatuses[i].Matched && !ruleStatuses[i].Deployed {
+				ruleStatuses[i].Deployed = true
+			}
+		}
+	}
+
 	if !selectorsEqual(addon.Status.PhaseValuesSelector, activeSelectors) {
 		if err := r.patchAddonStatus(ctx, addon, activeSelectors); err != nil {
 			logger.Error(nil, "Failed to patch Addon status", "addon", addon.Name, "reason", err.Error())

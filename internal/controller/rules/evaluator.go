@@ -74,6 +74,7 @@ func (e *RuleEvaluator) EvaluateRules(
 			Latched:       latched,
 			Message:       message,
 			LastEvaluated: lastEvaluated,
+			Deployed:      prev.Deployed,
 		})
 
 		if matched {

@@ -1273,3 +1273,87 @@ func TestCompareValues(t *testing.T) {
 		})
 	}
 }
+
+func TestRuleEvaluator_DeployedPreservedAcrossMatchFlip(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name: "flipping-rule",
+					Criteria: []addonsv1alpha1.Criterion{
+						{
+							JSONPath: "$.status.observedGeneration",
+							Operator: addonsv1alpha1.OperatorEqual,
+							Value:    &apiextensionsv1.JSON{Raw: []byte(`1`)},
+							Keep:     boolPtr(false),
+						},
+					},
+					Selector: addonsv1alpha1.ValuesSelector{
+						Name:     "default",
+						Priority: 10,
+					},
+				},
+			},
+		},
+		Status: addonsv1alpha1.AddonPhaseStatus{
+			RuleStatuses: []addonsv1alpha1.RuleStatus{
+				{
+					Name:     "flipping-rule",
+					Matched:  true,
+					Deployed: true,
+				},
+			},
+		},
+	}
+
+	// addon with observedGeneration=999 → criterion no longer matches
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Status:     addonsv1alpha1.AddonStatus{ObservedGeneration: 999},
+	}
+
+	ruleStatuses, _, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	require.Len(t, ruleStatuses, 1)
+	assert.False(t, ruleStatuses[0].Matched, "rule should no longer match")
+	assert.True(t, ruleStatuses[0].Deployed,
+		"Deployed should be preserved from previous state even when Matched flips to false")
+}
+
+func TestRuleEvaluator_DeployedNeverSetByEvaluator(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, addonsv1alpha1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	evaluator := NewRuleEvaluator(client)
+
+	phase := &addonsv1alpha1.AddonPhase{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+		Spec: addonsv1alpha1.AddonPhaseSpec{
+			Rules: []addonsv1alpha1.PhaseRule{
+				{
+					Name:     "always-matching",
+					Criteria: nil,
+					Selector: addonsv1alpha1.ValuesSelector{Name: "default", Priority: 10},
+				},
+			},
+		},
+		// No previous RuleStatuses → prev.Deployed zero-value false
+	}
+
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-phase"},
+	}
+
+	ruleStatuses, _, err := evaluator.EvaluateRules(context.Background(), phase, addon)
+	require.NoError(t, err)
+	require.Len(t, ruleStatuses, 1)
+	assert.True(t, ruleStatuses[0].Matched)
+	assert.False(t, ruleStatuses[0].Deployed,
+		"evaluator must never set Deployed=true on its own; only the controller does that")
+}
