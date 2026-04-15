@@ -27,6 +27,7 @@ import (
 
 const (
 	reasonUnknown = "Unknown"
+	reasonStale   = "Stale"
 )
 
 // StatusTranslator translates Argo CD Application status to Addon conditions.
@@ -53,7 +54,14 @@ func (t *StatusTranslator) UpdateConditions(cm *conditions.Manager, app *argocdv
 }
 
 // getSyncInfo extracts sync information from Application.
+//
+// Returns Synced=false with reason "Stale" when Argo CD has not yet finished a
+// compare cycle against the current spec.source.
 func (t *StatusTranslator) getSyncInfo(app *argocdv1alpha1.Application) (bool, string, string) {
+	if current, reason := isComparedToCurrent(app); !current {
+		return false, reasonStale, reason
+	}
+
 	switch app.Status.Sync.Status {
 	case argocdv1alpha1.SyncStatusCodeSynced:
 		return true, "Synced", "Application is synced with the target revision"
@@ -62,6 +70,29 @@ func (t *StatusTranslator) getSyncInfo(app *argocdv1alpha1.Application) (bool, s
 	default:
 		return false, reasonUnknown, fmt.Sprintf("Sync status: %s", app.Status.Sync.Status)
 	}
+}
+
+// isComparedToCurrent reports whether status.sync.comparedTo reflects the
+// current spec.source.
+func isComparedToCurrent(app *argocdv1alpha1.Application) (bool, string) {
+	if len(app.Spec.Sources) > 0 || len(app.Status.Sync.ComparedTo.Sources) > 0 {
+		return false, "multi-source Applications are not supported by this operator"
+	}
+
+	if app.Spec.Source == nil {
+		return false, "Application spec.source is empty"
+	}
+
+	observed := app.Status.Sync.ComparedTo.Source
+	if observed.RepoURL == "" && observed.Chart == "" && observed.Path == "" {
+		return false, "Argo has not yet compared the Application against its spec"
+	}
+
+	if !app.Spec.Source.Equals(&observed) {
+		return false, "Argo has not yet observed the current spec.source"
+	}
+
+	return true, ""
 }
 
 // getHealthInfo extracts health information from Application.

@@ -1420,6 +1420,9 @@ var _ = Describe("Addon Controller", func() {
 					return err
 				}
 				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+				if app.Spec.Source != nil {
+					app.Status.Sync.ComparedTo.Source = *app.Spec.Source
+				}
 				app.Status.Health.Status = health.HealthStatusHealthy
 
 				return k8sClient.Update(ctx, app)
@@ -1466,6 +1469,66 @@ var _ = Describe("Addon Controller", func() {
 			Expect(currentDeployedCond).NotTo(BeNil())
 			Expect(currentDeployedCond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(currentDeployedCond.LastTransitionTime).To(Equal(deployedTime))
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		// Regression for the scenario Dmitry reproduced by freezing Argo pods:
+		// an Application can carry Sync=Synced + Health=Healthy from a previous
+		// deploy, while its ComparedTo still points at the old spec. In that
+		// state Deployed must stay false — otherwise the operator latches
+		// Deployed=true against a spec Argo has never observed.
+		It("should NOT set Deployed=true when Sync/Health are stale vs spec.source", func() {
+			name := uniqueName("addon-stale")
+
+			By("Creating the Addon")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+
+			By("Waiting for Application to be created")
+			waitForApplication(name, "argocd")
+
+			By("Simulating stale Argo status: Sync=Synced + Health=Healthy but ComparedTo points to a different chart version")
+			Eventually(func() error {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return err
+				}
+				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+				app.Status.Health.Status = health.HealthStatusHealthy
+				// ComparedTo reflects an older spec that the operator has since overwritten.
+				if app.Spec.Source != nil {
+					stale := *app.Spec.Source
+					stale.TargetRevision = "0.0.1-stale"
+					app.Status.Sync.ComparedTo.Source = stale
+				}
+
+				return k8sClient.Update(ctx, app)
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying Deployed stays false for long enough that the controller has reconciled")
+			Consistently(func() bool {
+				current := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, current); err != nil {
+					return true
+				}
+
+				return current.Status.Deployed
+			}, 3*time.Second, 500*time.Millisecond).Should(BeFalse())
 
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
