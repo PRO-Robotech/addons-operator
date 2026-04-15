@@ -23,6 +23,7 @@ import (
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -108,13 +109,7 @@ func (r *AddonPhaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return r.updateStatusAndRequeue(ctx, phase, oldStatus)
 	}
 
-	if addon.Status.Deployed {
-		for i := range ruleStatuses {
-			if ruleStatuses[i].Matched && !ruleStatuses[i].Deployed {
-				ruleStatuses[i].Deployed = true
-			}
-		}
-	}
+	latchDeployedRules(ruleStatuses, activeSelectors, addon)
 
 	if !selectorsEqual(addon.Status.PhaseValuesSelector, activeSelectors) {
 		if err := r.patchAddonStatus(ctx, addon, activeSelectors); err != nil {
@@ -227,6 +222,28 @@ func (r *AddonPhaseReconciler) clearAddonStatus(ctx context.Context, name string
 
 		return r.Status().Patch(ctx, addon, patch)
 	})
+}
+
+// latchDeployedRules stamps Deployed=true on currently-matched rules
+func latchDeployedRules(
+	ruleStatuses []addonsv1alpha1.RuleStatus,
+	activeSelectors []addonsv1alpha1.ValuesSelector,
+	addon *addonsv1alpha1.Addon,
+) {
+	if !selectorsEqual(addon.Status.PhaseValuesSelector, activeSelectors) {
+		return
+	}
+	if !meta.IsStatusConditionTrue(addon.Status.Conditions, conditions.TypeSynced) {
+		return
+	}
+	if !meta.IsStatusConditionTrue(addon.Status.Conditions, conditions.TypeHealthy) {
+		return
+	}
+	for i := range ruleStatuses {
+		if ruleStatuses[i].Matched && !ruleStatuses[i].Deployed {
+			ruleStatuses[i].Deployed = true
+		}
+	}
 }
 
 func selectorsEqual(a, b []addonsv1alpha1.ValuesSelector) bool {
