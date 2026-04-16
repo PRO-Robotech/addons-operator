@@ -29,6 +29,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -49,8 +50,41 @@ const (
 // AddonPhaseReconciler reconciles AddonPhase objects.
 type AddonPhaseReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	APIReader               client.Reader
+	Scheme                  *runtime.Scheme
+	Recorder                record.EventRecorder
+	MaxConcurrentReconciles int
+}
+
+func (r *AddonPhaseReconciler) maxConcurrentReconciles() int {
+	if r.MaxConcurrentReconciles > 0 {
+		return r.MaxConcurrentReconciles
+	}
+
+	return 1
+}
+
+func (r *AddonPhaseReconciler) apiReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+
+	return r.Client
+}
+
+func (r *AddonPhaseReconciler) applyStatus(ctx context.Context, phase *addonsv1alpha1.AddonPhase) error {
+	key := client.ObjectKeyFromObject(phase)
+	desired := phase.Status
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &addonsv1alpha1.AddonPhase{}
+		if err := r.apiReader().Get(ctx, key, fresh); err != nil {
+			return err
+		}
+		fresh.Status = desired
+
+		return r.Status().Update(ctx, fresh)
+	})
 }
 
 // +kubebuilder:rbac:groups=addons.in-cloud.io,resources=addonphases,verbs=get;list;watch;create;update;patch;delete
@@ -256,7 +290,7 @@ func (r *AddonPhaseReconciler) updateStatus(ctx context.Context, phase *addonsv1
 	phase.Status.ObservedGeneration = phase.Generation
 
 	if !apiequality.Semantic.DeepEqual(oldStatus, &phase.Status) {
-		if err := r.Status().Update(ctx, phase); err != nil {
+		if err := r.applyStatus(ctx, phase); err != nil {
 			if apierrors.IsConflict(err) {
 				logger.Info("Conflict updating AddonPhase status, will retry", "addonphase", phase.Name)
 
@@ -360,6 +394,7 @@ func (r *AddonPhaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&addonsv1alpha1.Addon{},
 			handler.EnqueueRequestsFromMapFunc(r.findPhasesByDependency),
 		).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.maxConcurrentReconciles()}).
 		Named("addonphase").
 		Complete(r)
 }

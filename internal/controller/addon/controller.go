@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -63,8 +64,11 @@ const (
 // AddonReconciler reconciles Addon objects.
 type AddonReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+
+	APIReader               client.Reader
+	Scheme                  *runtime.Scheme
+	Recorder                record.EventRecorder
+	MaxConcurrentReconciles int
 
 	// Template engine for rendering Go templates in AddonValue strings.
 	// Stored in the reconciler to reuse the LRU template cache across reconciles.
@@ -74,6 +78,39 @@ type AddonReconciler struct {
 	watchManager dynamicwatch.WatchManager
 	tracker      dynamicwatch.Tracker
 	resolver     dynamicwatch.Resolver
+}
+
+func (r *AddonReconciler) apiReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+
+	return r.Client
+}
+
+// applyStatus updates addon.Status with retry-on-conflict, re-reading fresh
+// from the apiserver each attempt to avoid stale informer-cache versions.
+func (r *AddonReconciler) applyStatus(ctx context.Context, addon *addonsv1alpha1.Addon) error {
+	key := client.ObjectKeyFromObject(addon)
+	desired := addon.Status
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &addonsv1alpha1.Addon{}
+		if err := r.apiReader().Get(ctx, key, fresh); err != nil {
+			return err
+		}
+		fresh.Status = desired
+
+		return r.Status().Update(ctx, fresh)
+	})
+}
+
+func (r *AddonReconciler) maxConcurrentReconciles() int {
+	if r.MaxConcurrentReconciles > 0 {
+		return r.MaxConcurrentReconciles
+	}
+
+	return 1
 }
 
 // +kubebuilder:rbac:groups=addons.in-cloud.io,resources=addons,verbs=get;list;watch;create;update;patch;delete
@@ -448,7 +485,7 @@ func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha
 	addon.Status.ObservedGeneration = addon.Generation
 
 	if !apiequality.Semantic.DeepEqual(oldStatus, &addon.Status) {
-		if err := r.Status().Update(ctx, addon); err != nil {
+		if err := r.applyStatus(ctx, addon); err != nil {
 			if apierrors.IsConflict(err) {
 				logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
 
@@ -475,7 +512,7 @@ func (r *AddonReconciler) updateStatusAndRequeue(ctx context.Context, addon *add
 	addon.Status.ObservedGeneration = addon.Generation
 
 	if !apiequality.Semantic.DeepEqual(oldStatus, &addon.Status) {
-		if err := r.Status().Update(ctx, addon); err != nil {
+		if err := r.applyStatus(ctx, addon); err != nil {
 			if apierrors.IsConflict(err) {
 				logger.Info("Conflict updating Addon status, will retry", "addon", addon.Name)
 
@@ -576,6 +613,7 @@ func (r *AddonReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&addonsv1alpha1.Addon{},
 			handler.EnqueueRequestsFromMapFunc(r.findDependentAddons),
 		).
+		WithOptions(ctrlcontroller.Options{MaxConcurrentReconciles: r.maxConcurrentReconciles()}).
 		Named("addon").
 		Build(r)
 	if err != nil {

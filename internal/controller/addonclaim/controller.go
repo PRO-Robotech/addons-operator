@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -70,11 +71,13 @@ const (
 // Reconciler reconciles AddonClaim objects.
 type Reconciler struct {
 	client.Client
-	Scheme          *runtime.Scheme
-	Recorder        record.EventRecorder
-	RemoteClients   *remoteclient.Cache
-	Renderer        *Renderer
-	PollingInterval time.Duration
+	APIReader               client.Reader
+	Scheme                  *runtime.Scheme
+	Recorder                record.EventRecorder
+	RemoteClients           *remoteclient.Cache
+	Renderer                *Renderer
+	PollingInterval         time.Duration
+	MaxConcurrentReconciles int
 }
 
 // reconcileContext holds intermediate state passed between reconciliation steps.
@@ -83,6 +86,7 @@ type reconcileContext struct {
 	cm           *pkgconditions.Manager
 	addon        *addonsv1alpha1.Addon
 	remoteClient client.Client
+	cacheKey     remoteclient.CacheKey
 	oldStatus    addonsv1alpha1.AddonClaimStatus
 }
 
@@ -214,6 +218,18 @@ func (r *Reconciler) connectRemote(ctx context.Context, rctx *reconcileContext) 
 		Namespace:  claim.Namespace,
 		SecretName: claim.Spec.CredentialRef.Name,
 	}
+	rctx.cacheKey = cacheKey
+
+	if ok, waitFor := r.RemoteClients.CheckHealth(cacheKey); !ok {
+		cm.SetCondition(TypeRemoteConnected, false, ReasonRemoteClientFail,
+			fmt.Sprintf("remote cluster backoff active, retrying in %s", waitFor.Round(time.Second)))
+		cm.SetProgressing(ReasonRemoteClientFail, ReasonRemoteClientFail,
+			"Waiting for remote cluster backoff to elapse")
+		result, updateErr := r.updateStatusAndRequeue(ctx, rctx, waitFor)
+
+		return result, updateErr, true
+	}
+
 	rc, err := r.RemoteClients.GetOrCreate(kubeconfigData, cacheKey, secret.ResourceVersion)
 	if err != nil {
 		cm.SetCondition(TypeRemoteConnected, false, ReasonRemoteClientFail, err.Error())
@@ -238,6 +254,7 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	addon := rctx.addon
 
 	if err := r.reconcileRemoteAddonValue(ctx, rc, claim, addon.Name); err != nil {
+		r.RemoteClients.RecordFailure(rctx.cacheKey)
 		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
 		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync AddonValue to remote cluster")
 		r.Recorder.Eventf(claim, "Warning", "AddonValueSyncFailed", "Failed to sync AddonValue: %v", err)
@@ -247,6 +264,7 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	}
 
 	if err := r.reconcileRemoteAddon(ctx, rc, addon); err != nil {
+		r.RemoteClients.RecordFailure(rctx.cacheKey)
 		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
 		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync Addon to remote cluster")
 		r.Recorder.Eventf(claim, "Warning", "AddonSyncFailed", "Failed to sync Addon: %v", err)
@@ -254,6 +272,8 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 
 		return result, updateErr, true
 	}
+
+	r.RemoteClients.RecordSuccess(rctx.cacheKey)
 
 	cm.SetCondition(TypeAddonSynced, true, "Synced", "Addon and AddonValue synced to remote cluster")
 	r.syncRemoteAddonStatus(ctx, rc, claim, addon.Name)
@@ -559,8 +579,19 @@ func (r *Reconciler) updateStatusAndRequeue(ctx context.Context, rctx *reconcile
 
 func (r *Reconciler) doStatusUpdate(ctx context.Context, claim *addonsv1alpha1.AddonClaim, result ctrl.Result) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	claimKey := client.ObjectKeyFromObject(claim)
+	desiredStatus := claim.Status
 
-	if err := r.Status().Update(ctx, claim); err != nil {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		fresh := &addonsv1alpha1.AddonClaim{}
+		if getErr := r.apiReader().Get(ctx, claimKey, fresh); getErr != nil {
+			return getErr
+		}
+		fresh.Status = desiredStatus
+
+		return r.Status().Update(ctx, fresh)
+	})
+	if err != nil {
 		if apierrors.IsConflict(err) {
 			logger.Info("Conflict updating AddonClaim status, will retry")
 
@@ -572,6 +603,14 @@ func (r *Reconciler) doStatusUpdate(ctx context.Context, claim *addonsv1alpha1.A
 	}
 
 	return result, nil
+}
+
+func (r *Reconciler) apiReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+
+	return r.Client
 }
 
 func (r *Reconciler) pollingInterval() time.Duration {
@@ -593,8 +632,17 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.findClaimsForSecret),
 		).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.maxConcurrentReconciles()}).
 		Named("addonclaim").
 		Complete(r)
+}
+
+func (r *Reconciler) maxConcurrentReconciles() int {
+	if r.MaxConcurrentReconciles > 0 {
+		return r.MaxConcurrentReconciles
+	}
+
+	return 1
 }
 
 func (r *Reconciler) findClaimsForSecret(ctx context.Context, obj client.Object) []reconcile.Request {

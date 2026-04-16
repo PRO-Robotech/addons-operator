@@ -26,12 +26,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	defaultQPS      = 20
-	defaultBurst    = 40
-	cleanupInterval = 5 * time.Minute
-	maxIdleDuration = 10 * time.Minute
-)
+const defaultQPS = 20
+const defaultBurst = 40
+const cleanupInterval = 5 * time.Minute
+const maxIdleDuration = 10 * time.Minute
+const defaultRequestTimeout = 10 * time.Second
+const healthBackoffInitial = 15 * time.Second
+const healthBackoffMax = 15 * time.Minute
 
 // CacheKey uniquely identifies a remote cluster client by the Secret that holds its kubeconfig.
 type CacheKey struct {
@@ -50,14 +51,20 @@ type cachedClient struct {
 	lastUsed        time.Time
 }
 
-// Cache is a thread-safe cache of controller-runtime clients for remote clusters.
-// Clients are keyed by (namespace, secretName) and invalidated when the Secret's
-// resourceVersion changes (indicating kubeconfig rotation).
+type healthState struct {
+	consecutiveFailures int
+	openUntil           time.Time
+}
+
+// Cache holds controller-runtime clients per (namespace, secretName) and
+// tracks per-cluster failure backoff so that dead remotes don't block workers.
 type Cache struct {
 	mu          sync.Mutex
 	clients     map[CacheKey]*cachedClient
+	health      map[CacheKey]*healthState
 	scheme      *runtime.Scheme
 	buildClient func(kubeconfigData []byte) (client.Client, error)
+	now         func() time.Time
 	stopCh      chan struct{}
 	stopped     bool
 }
@@ -67,7 +74,9 @@ type Cache struct {
 func NewCache(scheme *runtime.Scheme) *Cache {
 	c := &Cache{
 		clients: make(map[CacheKey]*cachedClient),
+		health:  make(map[CacheKey]*healthState),
 		scheme:  scheme,
+		now:     time.Now,
 		stopCh:  make(chan struct{}),
 	}
 	c.buildClient = c.defaultBuildClient
@@ -98,7 +107,6 @@ func (c *Cache) GetOrCreate(kubeconfigData []byte, key CacheKey, resourceVersion
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Double-check: another goroutine may have populated the entry while we were building.
 	if entry, ok := c.clients[key]; ok && entry.resourceVersion == resourceVersion {
 		entry.lastUsed = time.Now()
 
@@ -112,6 +120,63 @@ func (c *Cache) GetOrCreate(kubeconfigData []byte, key CacheKey, resourceVersion
 	}
 
 	return newClient, nil
+}
+
+// CheckHealth returns (true, 0) if the caller may call the remote cluster,
+// or (false, waitFor) if the cluster is in backoff — requeue after waitFor.
+func (c *Cache) CheckHealth(key CacheKey) (ok bool, waitFor time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state, exists := c.health[key]
+	if !exists {
+		return true, 0
+	}
+
+	remaining := state.openUntil.Sub(c.now())
+	if remaining <= 0 {
+		return true, 0
+	}
+
+	return false, remaining
+}
+
+// RecordFailure doubles the backoff for the cluster, up to healthBackoffMax.
+func (c *Cache) RecordFailure(key CacheKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	state, exists := c.health[key]
+	if !exists {
+		state = &healthState{}
+		c.health[key] = state
+	}
+	state.consecutiveFailures++
+	state.openUntil = c.now().Add(computeHealthBackoff(state.consecutiveFailures))
+}
+
+// RecordSuccess clears the backoff for the cluster.
+func (c *Cache) RecordSuccess(key CacheKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.health, key)
+}
+
+// computeHealthBackoff: 15s, 30s, 1m, 2m, 4m, 8m, 15m (capped).
+func computeHealthBackoff(failures int) time.Duration {
+	if failures < 1 {
+		return healthBackoffInitial
+	}
+	shift := failures - 1
+	if shift > 30 {
+		return healthBackoffMax
+	}
+	d := healthBackoffInitial << shift
+	if d <= 0 || d > healthBackoffMax {
+		return healthBackoffMax
+	}
+
+	return d
 }
 
 // Invalidate removes the cached client for the given key.
@@ -175,6 +240,9 @@ func (c *Cache) defaultBuildClient(kubeconfigData []byte) (client.Client, error)
 	}
 	restConfig.QPS = defaultQPS
 	restConfig.Burst = defaultBurst
+	if restConfig.Timeout == 0 {
+		restConfig.Timeout = defaultRequestTimeout
+	}
 
 	return client.New(restConfig, client.Options{Scheme: c.scheme})
 }
