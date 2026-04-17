@@ -51,6 +51,9 @@ import (
 const (
 	envEnableWebhooks              = "ENABLE_WEBHOOKS"
 	defaultGracefulShutdownTimeout = 30 * time.Second
+	defaultKubeAPIQPS              = 50
+	defaultKubeAPIBurst            = 100
+	defaultMaxConcurrentReconciles = 5
 )
 
 var (
@@ -97,6 +100,9 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var gracefulShutdownTimeout time.Duration
+	var kubeAPIQPS float64
+	var kubeAPIBurst int
+	var maxConcurrentReconciles int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -117,6 +123,12 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.DurationVar(&gracefulShutdownTimeout, "graceful-shutdown-timeout", defaultGracefulShutdownTimeout,
 		"Timeout for graceful shutdown of the manager")
+	flag.Float64Var(&kubeAPIQPS, "kube-api-qps", defaultKubeAPIQPS,
+		"QPS to use for the Kubernetes API client. Raise under heavy reconcile load.")
+	flag.IntVar(&kubeAPIBurst, "kube-api-burst", defaultKubeAPIBurst,
+		"Burst to use for the Kubernetes API client. Raise alongside kube-api-qps.")
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", defaultMaxConcurrentReconciles,
+		"Number of concurrent workers per controller (Addon, AddonPhase).")
 	opts := zap.Options{
 		Development: true,
 		// Only add stack traces for panic level logs
@@ -195,7 +207,11 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restConfig := ctrl.GetConfigOrDie()
+	restConfig.QPS = float32(kubeAPIQPS)
+	restConfig.Burst = kubeAPIBurst
+
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:                  scheme,
 		Metrics:                 metricsServerOptions,
 		WebhookServer:           webhookServer,
@@ -221,17 +237,21 @@ func main() {
 	}
 
 	if err := (&addonctrl.AddonReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("addon-controller"),
+		Client:                  mgr.GetClient(),
+		APIReader:               mgr.GetAPIReader(),
+		Scheme:                  mgr.GetScheme(),
+		Recorder:                mgr.GetEventRecorderFor("addon-controller"),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Addon")
 		os.Exit(1)
 	}
 	if err := (&addonphasectrl.AddonPhaseReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("addonphase-controller"),
+		Client:                  mgr.GetClient(),
+		APIReader:               mgr.GetAPIReader(),
+		Scheme:                  mgr.GetScheme(),
+		Recorder:                mgr.GetEventRecorderFor("addonphase-controller"),
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AddonPhase")
 		os.Exit(1)

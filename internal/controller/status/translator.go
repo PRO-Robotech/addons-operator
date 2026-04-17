@@ -53,10 +53,9 @@ func (t *StatusTranslator) UpdateConditions(cm *conditions.Manager, app *argocdv
 	cm.SetOperationalCondition(conditions.TypeHealthy, healthStatus, healthReason, healthMessage)
 }
 
-// getSyncInfo extracts sync information from Application.
-//
-// Returns Synced=false with reason "Stale" when Argo CD has not yet finished a
-// compare cycle against the current spec.source.
+// getSyncInfo returns Synced=false with reason "Stale" if Argo has not yet
+// compared the Application against the current spec.source — otherwise the
+// Sync/Health status reflects a previous spec and would falsely latch Deployed.
 func (t *StatusTranslator) getSyncInfo(app *argocdv1alpha1.Application) (bool, string, string) {
 	if current, reason := isComparedToCurrent(app); !current {
 		return false, reasonStale, reason
@@ -72,8 +71,8 @@ func (t *StatusTranslator) getSyncInfo(app *argocdv1alpha1.Application) (bool, s
 	}
 }
 
-// isComparedToCurrent reports whether status.sync.comparedTo reflects the
-// current spec.source.
+// isComparedToCurrent reports whether status.sync.comparedTo matches the
+// current spec.source. Uses Argo's own ApplicationSource.Equals.
 func isComparedToCurrent(app *argocdv1alpha1.Application) (bool, string) {
 	if len(app.Spec.Sources) > 0 || len(app.Status.Sync.ComparedTo.Sources) > 0 {
 		return false, "multi-source Applications are not supported by this operator"

@@ -209,3 +209,89 @@ func TestCacheKey_String(t *testing.T) {
 	key := CacheKey{Namespace: "my-namespace", SecretName: "my-secret"}
 	assert.Equal(t, "my-namespace/my-secret", key.String())
 }
+
+func TestCheckHealth_NoHistoryIsHealthy(t *testing.T) {
+	c := newTestCache()
+	ok, waitFor := c.CheckHealth(CacheKey{Namespace: "ns", SecretName: "s"})
+	assert.True(t, ok)
+	assert.Equal(t, time.Duration(0), waitFor)
+}
+
+func TestRecordFailure_BacksOffExponentially(t *testing.T) {
+	c := newTestCache()
+	now := time.Unix(0, 0)
+	c.now = func() time.Time { return now }
+
+	key := CacheKey{Namespace: "ns", SecretName: "s"}
+
+	expectations := []time.Duration{
+		15 * time.Second,
+		30 * time.Second,
+		1 * time.Minute,
+		2 * time.Minute,
+		4 * time.Minute,
+		8 * time.Minute,
+		15 * time.Minute, // would be 16m, capped at 15m
+		15 * time.Minute, // stays capped
+	}
+
+	for i, want := range expectations {
+		c.RecordFailure(key)
+
+		ok, waitFor := c.CheckHealth(key)
+		assert.False(t, ok, "attempt %d should be gated", i+1)
+		assert.Equal(t, want, waitFor, "attempt %d wrong backoff", i+1)
+	}
+}
+
+func TestRecordSuccess_ClearsBackoff(t *testing.T) {
+	c := newTestCache()
+	now := time.Unix(0, 0)
+	c.now = func() time.Time { return now }
+
+	key := CacheKey{Namespace: "ns", SecretName: "s"}
+	c.RecordFailure(key)
+	c.RecordFailure(key)
+
+	ok, _ := c.CheckHealth(key)
+	require.False(t, ok, "should be gated after failures")
+
+	c.RecordSuccess(key)
+
+	ok, waitFor := c.CheckHealth(key)
+	assert.True(t, ok, "success must clear backoff")
+	assert.Equal(t, time.Duration(0), waitFor)
+
+	// A fresh failure starts from the initial backoff, not where the series left off.
+	c.RecordFailure(key)
+	_, waitFor = c.CheckHealth(key)
+	assert.Equal(t, healthBackoffInitial, waitFor, "counter must reset after success")
+}
+
+func TestCheckHealth_ResumesAfterBackoffElapses(t *testing.T) {
+	c := newTestCache()
+	now := time.Unix(0, 0)
+	c.now = func() time.Time { return now }
+
+	key := CacheKey{Namespace: "ns", SecretName: "s"}
+	c.RecordFailure(key)
+
+	// Right before backoff ends — still gated.
+	now = now.Add(healthBackoffInitial - time.Nanosecond)
+	ok, _ := c.CheckHealth(key)
+	assert.False(t, ok)
+
+	// After backoff elapses — callers may attempt again.
+	now = now.Add(2 * time.Nanosecond)
+	ok, waitFor := c.CheckHealth(key)
+	assert.True(t, ok)
+	assert.Equal(t, time.Duration(0), waitFor)
+}
+
+func TestComputeHealthBackoff_CapsAtMax(t *testing.T) {
+	assert.Equal(t, healthBackoffInitial, computeHealthBackoff(1))
+	assert.Equal(t, 2*healthBackoffInitial, computeHealthBackoff(2))
+	assert.Equal(t, healthBackoffMax, computeHealthBackoff(7))  // would overflow past cap
+	assert.Equal(t, healthBackoffMax, computeHealthBackoff(50)) // obvious cap
+	assert.Equal(t, healthBackoffMax, computeHealthBackoff(1000))
+}

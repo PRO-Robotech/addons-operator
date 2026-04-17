@@ -33,8 +33,7 @@ func newTestConditionManager(conds *[]metav1.Condition) *conditions.Manager {
 	return conditions.NewManager(conds, 1)
 }
 
-// newHelmApp builds a minimal Application whose spec.source and
-// status.sync.comparedTo.source match
+// newHelmApp builds a minimal Application
 func newHelmApp(syncStatus argocdv1alpha1.SyncStatusCode, healthStatus health.HealthStatusCode, healthMessage string) *argocdv1alpha1.Application {
 	newSource := func() argocdv1alpha1.ApplicationSource {
 		return argocdv1alpha1.ApplicationSource{
