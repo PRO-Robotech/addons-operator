@@ -21,6 +21,7 @@ import (
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -675,5 +676,239 @@ spec:
 		deleteAddonTemplate(templateName)
 		deleteSecret(secretName, testNamespace)
 		deleteAddon(addonName)
+	})
+
+	Context("Pause Annotation", func() {
+		readyReason := func(claimName string) string {
+			current := &addonsv1alpha1.AddonClaim{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, current); err != nil {
+				return ""
+			}
+			cond := meta.FindStatusCondition(current.Status.Conditions, "Ready")
+			if cond == nil {
+				return ""
+			}
+
+			return cond.Reason
+		}
+
+		It("should skip reconciliation when paused annotation is set", func() {
+			templateName := uniqueName("pause-tmpl")
+			secretName := uniqueName("pause-secret")
+			claimName := uniqueName("pause-claim")
+			addonName := uniqueName("pause-addon")
+
+			By("Creating the AddonTemplate")
+			createTestAddonTemplate(templateName, claimTestTemplate)
+
+			By("Creating the credential Secret with kubeconfig")
+			kubeconfigBytes := restConfigToKubeconfig(cfg)
+			createTestSecret(secretName, testNamespace, map[string][]byte{
+				"value": kubeconfigBytes,
+			})
+
+			By("Creating the AddonClaim")
+			createTestAddonClaim(claimName, testNamespace, addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: addonName},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: secretName},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: templateName},
+				Variables:     makeVariables(addonName, "1.0.0", "test-cluster"),
+			})
+
+			By("Waiting for initial AddonSynced=True")
+			waitForClaimCondition(claimName, addonclaim.TypeAddonSynced, metav1.ConditionTrue)
+
+			By("Recording initial remote Addon spec")
+			initialAddon := &addonsv1alpha1.Addon{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, initialAddon)).To(Succeed())
+			initialResourceVersion := initialAddon.ResourceVersion
+
+			By("Adding pause annotation")
+			claim := &addonsv1alpha1.AddonClaim{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, claim)).To(Succeed())
+			if claim.Annotations == nil {
+				claim.Annotations = make(map[string]string)
+			}
+			claim.Annotations["addons.in-cloud.io/paused"] = "true"
+			Expect(k8sClient.Update(ctx, claim)).To(Succeed())
+
+			By("Verifying Ready condition shows Paused reason")
+			Eventually(func() string {
+				return readyReason(claimName)
+			}, claimTimeout, interval).Should(Equal(addonclaim.ReasonPaused))
+
+			By("Verifying Progressing is False when paused")
+			Eventually(func() metav1.ConditionStatus {
+				current := &addonsv1alpha1.AddonClaim{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, current); err != nil {
+					return metav1.ConditionUnknown
+				}
+				cond := meta.FindStatusCondition(current.Status.Conditions, "Progressing")
+				if cond == nil {
+					return metav1.ConditionUnknown
+				}
+
+				return cond.Status
+			}, claimTimeout, interval).Should(Equal(metav1.ConditionFalse))
+
+			By("Updating AddonClaim variables while paused")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, claim)).To(Succeed())
+			claim.Spec.Variables = makeVariables(addonName, "2.0.0", "test-cluster")
+			Expect(k8sClient.Update(ctx, claim)).To(Succeed())
+
+			By("Verifying remote Addon is not updated while paused")
+			Consistently(func() string {
+				addon := &addonsv1alpha1.Addon{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, addon); err != nil {
+					return ""
+				}
+
+				return addon.Spec.Version
+			}, 2*time.Second, 200*time.Millisecond).Should(Equal("1.0.0"))
+			currentAddon := &addonsv1alpha1.Addon{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, currentAddon)).To(Succeed())
+			Expect(currentAddon.ResourceVersion).To(Equal(initialResourceVersion))
+
+			By("Cleanup")
+			deleteAddonClaim(claimName, testNamespace)
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, &addonsv1alpha1.AddonClaim{})
+
+				return apierrors.IsNotFound(err)
+			}, claimTimeout, interval).Should(BeTrue())
+			deleteAddonTemplate(templateName)
+			deleteSecret(secretName, testNamespace)
+			deleteAddon(addonName)
+		})
+
+		It("should resume reconciliation when pause annotation is removed", func() {
+			templateName := uniqueName("resume-tmpl")
+			secretName := uniqueName("resume-secret")
+			claimName := uniqueName("resume-claim")
+			addonName := uniqueName("resume-addon")
+
+			By("Creating the AddonTemplate")
+			createTestAddonTemplate(templateName, claimTestTemplate)
+
+			By("Creating the credential Secret with kubeconfig")
+			kubeconfigBytes := restConfigToKubeconfig(cfg)
+			createTestSecret(secretName, testNamespace, map[string][]byte{
+				"value": kubeconfigBytes,
+			})
+
+			By("Creating a paused AddonClaim")
+			claim := &addonsv1alpha1.AddonClaim{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      claimName,
+					Namespace: testNamespace,
+					Annotations: map[string]string{
+						"addons.in-cloud.io/paused": "true",
+					},
+				},
+				Spec: addonsv1alpha1.AddonClaimSpec{
+					Addon:         addonsv1alpha1.AddonIdentity{Name: addonName},
+					CredentialRef: addonsv1alpha1.CredentialRef{Name: secretName},
+					TemplateRef:   addonsv1alpha1.TemplateRef{Name: templateName},
+					Variables:     makeVariables(addonName, "1.0.0", "test-cluster"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, claim)).To(Succeed())
+
+			By("Verifying claim is paused (Ready=False, Reason=Paused)")
+			Eventually(func() string {
+				return readyReason(claimName)
+			}, claimTimeout, interval).Should(Equal(addonclaim.ReasonPaused))
+
+			By("Verifying no remote Addon is created while paused")
+			Consistently(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, &addonsv1alpha1.Addon{})
+			}, 2*time.Second, 200*time.Millisecond).ShouldNot(Succeed())
+
+			By("Removing pause annotation")
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, claim)).To(Succeed())
+			delete(claim.Annotations, "addons.in-cloud.io/paused")
+			Expect(k8sClient.Update(ctx, claim)).To(Succeed())
+
+			By("Verifying remote Addon is created after unpause")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, &addonsv1alpha1.Addon{})
+			}, claimTimeout, interval).Should(Succeed())
+			waitForClaimCondition(claimName, addonclaim.TypeAddonSynced, metav1.ConditionTrue)
+
+			By("Cleanup")
+			deleteAddonClaim(claimName, testNamespace)
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, &addonsv1alpha1.AddonClaim{})
+
+				return apierrors.IsNotFound(err)
+			}, claimTimeout, interval).Should(BeTrue())
+			deleteAddonTemplate(templateName)
+			deleteSecret(secretName, testNamespace)
+			deleteAddon(addonName)
+		})
+
+		It("should allow deletion even when paused", func() {
+			templateName := uniqueName("pdel-tmpl")
+			secretName := uniqueName("pdel-secret")
+			claimName := uniqueName("pdel-claim")
+			addonName := uniqueName("pdel-addon")
+
+			By("Creating the AddonTemplate")
+			createTestAddonTemplate(templateName, claimTestTemplate)
+
+			By("Creating the credential Secret with kubeconfig")
+			kubeconfigBytes := restConfigToKubeconfig(cfg)
+			createTestSecret(secretName, testNamespace, map[string][]byte{
+				"value": kubeconfigBytes,
+			})
+
+			By("Creating the AddonClaim")
+			createTestAddonClaim(claimName, testNamespace, addonsv1alpha1.AddonClaimSpec{
+				Addon:         addonsv1alpha1.AddonIdentity{Name: addonName},
+				CredentialRef: addonsv1alpha1.CredentialRef{Name: secretName},
+				TemplateRef:   addonsv1alpha1.TemplateRef{Name: templateName},
+				Variables:     makeVariables(addonName, "1.0.0", "test-cluster"),
+			})
+
+			By("Waiting for remote Addon to appear")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, &addonsv1alpha1.Addon{})
+			}, claimTimeout, interval).Should(Succeed())
+
+			By("Adding pause annotation")
+			claim := &addonsv1alpha1.AddonClaim{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, claim)).To(Succeed())
+			if claim.Annotations == nil {
+				claim.Annotations = make(map[string]string)
+			}
+			claim.Annotations["addons.in-cloud.io/paused"] = "true"
+			Expect(k8sClient.Update(ctx, claim)).To(Succeed())
+
+			By("Verifying claim is paused (Ready=False, Reason=Paused)")
+			Eventually(func() string {
+				return readyReason(claimName)
+			}, claimTimeout, interval).Should(Equal(addonclaim.ReasonPaused))
+
+			By("Deleting the paused AddonClaim")
+			deleteAddonClaim(claimName, testNamespace)
+
+			By("Verifying AddonClaim is deleted (finalizer cleared)")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, &addonsv1alpha1.AddonClaim{})
+
+				return apierrors.IsNotFound(err)
+			}, claimTimeout, interval).Should(BeTrue())
+
+			By("Verifying remote Addon is also deleted")
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{Name: addonName}, &addonsv1alpha1.Addon{})
+
+				return apierrors.IsNotFound(err)
+			}, claimTimeout, interval).Should(BeTrue())
+
+			By("Cleanup")
+			deleteAddonTemplate(templateName)
+			deleteSecret(secretName, testNamespace)
+		})
 	})
 })
