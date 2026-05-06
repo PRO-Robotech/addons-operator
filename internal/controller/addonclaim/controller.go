@@ -45,13 +45,15 @@ import (
 )
 
 const (
-	DefaultPollingInterval  = 15 * time.Second
-	requeueIntervalDegraded = 60 * time.Second
-	finalizerName           = "addons.in-cloud.io/addonclaim-finalizer"
-	secretKubeconfigKey     = "value"
-	addonLabelKey           = "addons.in-cloud.io/addon"
-	valuesLabelKey          = "addons.in-cloud.io/values"
-	valuesLabelValue        = "claim"
+	DefaultPollingInterval   = 15 * time.Second
+	requeueIntervalDegraded  = 60 * time.Second
+	finalizerName            = "addons.in-cloud.io/addonclaim-finalizer"
+	secretKubeconfigKey      = "value"
+	addonLabelKey            = "addons.in-cloud.io/addon"
+	valuesLabelKey           = "addons.in-cloud.io/values"
+	valuesLabelValue         = "claim"
+	pauseAnnotationKey       = "addons.in-cloud.io/paused"
+	pauseAnnotationValueTrue = "true"
 
 	// Condition types specific to AddonClaim.
 	TypeTemplateRendered = "TemplateRendered"
@@ -66,6 +68,7 @@ const (
 	ReasonRemoteClientFail    = "RemoteClientFailed"
 	ReasonRemoteOperationFail = "RemoteOperationFailed"
 	ReasonAddonNotReady       = "AddonNotReady"
+	ReasonPaused              = "Paused"
 )
 
 // Reconciler reconciles AddonClaim objects.
@@ -126,6 +129,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		claim:     claim,
 		cm:        cm,
 		oldStatus: *claim.Status.DeepCopy(),
+	}
+
+	if isPaused(claim) {
+		logger.Info("AddonClaim is paused, skipping reconciliation")
+		cm.SetCondition(pkgconditions.TypeReady, false, ReasonPaused, "Reconciliation is paused")
+		cm.SetCondition(pkgconditions.TypeProgressing, false, ReasonPaused, "Reconciliation is paused")
+
+		return r.updateStatus(ctx, rctx)
 	}
 
 	if result, err, done := r.renderAddon(ctx, rctx); done {
@@ -679,4 +690,12 @@ func isAddonReady(addon *addonsv1alpha1.Addon) bool {
 	}
 
 	return false
+}
+
+// isPaused returns true if the AddonClaim has the pause annotation set to "true".
+// When paused, the controller skips reconciliation allowing manual debugging
+// of the remote Addon/AddonValue without the controller overwriting changes.
+// Deletion still proceeds via finalizer cleanup.
+func isPaused(claim *addonsv1alpha1.AddonClaim) bool {
+	return claim.Annotations[pauseAnnotationKey] == pauseAnnotationValueTrue
 }
