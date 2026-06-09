@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,11 +37,137 @@ import (
 )
 
 type RuleEvaluator struct {
-	client client.Client
+	client        client.Client
+	cacheBackedGK map[schema.GroupKind]bool
 }
 
 func NewRuleEvaluator(c client.Client) *RuleEvaluator {
-	return &RuleEvaluator{client: c}
+	return &RuleEvaluator{
+		client:        c,
+		cacheBackedGK: buildCacheBackedGK(c.Scheme()),
+	}
+}
+
+func buildCacheBackedGK(s *runtime.Scheme) map[schema.GroupKind]bool {
+	gks := make(map[schema.GroupKind]bool)
+	if s == nil {
+		return gks
+	}
+
+	for _, obj := range []client.Object{
+		&addonsv1alpha1.Addon{},
+		&addonsv1alpha1.AddonPhase{},
+		&addonsv1alpha1.AddonValue{},
+		&argocdv1alpha1.Application{},
+	} {
+		kinds, _, err := s.ObjectKinds(obj)
+		if err != nil {
+			continue
+		}
+		for _, gvk := range kinds {
+			gks[gvk.GroupKind()] = true
+		}
+	}
+
+	return gks
+}
+
+// evalContext memoizes source reads and the target-addon map for one EvaluateRules call.
+type evalContext struct {
+	targetAddon *addonsv1alpha1.Addon
+
+	targetMap  map[string]any
+	targetErr  error
+	targetDone bool
+
+	sources map[string]sourceEntry
+}
+
+type sourceEntry struct {
+	obj   map[string]any
+	found bool
+}
+
+func newEvalContext(addon *addonsv1alpha1.Addon) *evalContext {
+	return &evalContext{targetAddon: addon, sources: make(map[string]sourceEntry)}
+}
+
+func (ec *evalContext) addonMap() (map[string]any, error) {
+	if ec.targetDone {
+		return ec.targetMap, ec.targetErr
+	}
+	ec.targetDone = true
+
+	data, err := json.Marshal(ec.targetAddon)
+	if err != nil {
+		ec.targetErr = fmt.Errorf("marshal addon: %w", err)
+		return nil, ec.targetErr
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		ec.targetErr = fmt.Errorf("unmarshal addon: %w", err)
+		return nil, ec.targetErr
+	}
+	ec.targetMap = m
+
+	return ec.targetMap, nil
+}
+
+func (e *RuleEvaluator) resolveSource(
+	ctx context.Context,
+	src *addonsv1alpha1.CriterionSource,
+	ec *evalContext,
+) (map[string]any, bool, error) {
+	key := src.APIVersion + "|" + src.Kind + "|" + src.Namespace + "|" + src.Name
+	if entry, ok := ec.sources[key]; ok {
+		return entry.obj, entry.found, nil
+	}
+
+	obj, err := e.getSource(ctx, src)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			ec.sources[key] = sourceEntry{found: false}
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	ec.sources[key] = sourceEntry{obj: obj, found: true}
+
+	return obj, true, nil
+}
+
+// Cache-backed kinds are read typed (cache hit); other kinds stay unstructured/uncached
+// so no new cluster-wide informer is started.
+func (e *RuleEvaluator) getSource(
+	ctx context.Context,
+	src *addonsv1alpha1.CriterionSource,
+) (map[string]any, error) {
+	gvk := schema.FromAPIVersionAndKind(src.APIVersion, src.Kind)
+	key := types.NamespacedName{Name: src.Name, Namespace: src.Namespace}
+
+	if e.cacheBackedGK[gvk.GroupKind()] {
+		if obj, err := e.client.Scheme().New(gvk); err == nil {
+			if cObj, ok := obj.(client.Object); ok {
+				if getErr := e.client.Get(ctx, key, cObj); getErr != nil {
+					return nil, getErr
+				}
+				m, convErr := runtime.DefaultUnstructuredConverter.ToUnstructured(cObj)
+				if convErr != nil {
+					return nil, fmt.Errorf("convert %s/%s to map: %w", src.Kind, src.Name, convErr)
+				}
+				return m, nil
+			}
+		}
+	}
+
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(gvk)
+	if err := e.client.Get(ctx, key, u); err != nil {
+		return nil, err
+	}
+
+	return u.Object, nil
 }
 
 func (e *RuleEvaluator) EvaluateRules(
@@ -51,10 +179,12 @@ func (e *RuleEvaluator) EvaluateRules(
 	ruleStatuses := make([]addonsv1alpha1.RuleStatus, 0, len(phase.Spec.Rules))
 	activeSelectors := make([]addonsv1alpha1.ValuesSelector, 0, len(phase.Spec.Rules))
 
+	ec := newEvalContext(targetAddon)
+
 	for _, rule := range phase.Spec.Rules {
 		prev := previousStatuses[rule.Name]
 
-		matched, message, err := e.evaluateRule(ctx, rule, targetAddon, prev.Latched)
+		matched, message, err := e.evaluateRule(ctx, rule, ec, prev.Latched)
 		if err != nil {
 			return nil, nil, fmt.Errorf("evaluate rule %s: %w", rule.Name, err)
 		}
@@ -111,7 +241,7 @@ func isKeepCriterion(c addonsv1alpha1.Criterion) bool {
 func (e *RuleEvaluator) evaluateRule(
 	ctx context.Context,
 	rule addonsv1alpha1.PhaseRule,
-	targetAddon *addonsv1alpha1.Addon,
+	ec *evalContext,
 	previouslyLatched bool,
 ) (bool, string, error) {
 	if len(rule.Criteria) == 0 {
@@ -123,7 +253,7 @@ func (e *RuleEvaluator) evaluateRule(
 			continue
 		}
 
-		matched, reason, err := e.evaluateCriterion(ctx, criterion, targetAddon)
+		matched, reason, err := e.evaluateCriterion(ctx, criterion, ec)
 		if err != nil {
 			return false, "", fmt.Errorf("criterion %d: %w", i, err)
 		}
@@ -135,41 +265,26 @@ func (e *RuleEvaluator) evaluateRule(
 	return true, "All conditions satisfied", nil
 }
 
-//nolint:gocyclo,nestif // criterion evaluation with source resolution branching
 func (e *RuleEvaluator) evaluateCriterion(
 	ctx context.Context,
 	criterion addonsv1alpha1.Criterion,
-	targetAddon *addonsv1alpha1.Addon,
+	ec *evalContext,
 ) (bool, string, error) {
 	var obj any
 
 	if criterion.Source != nil {
-		u := &unstructured.Unstructured{}
-		u.SetGroupVersionKind(schema.FromAPIVersionAndKind(
-			criterion.Source.APIVersion,
-			criterion.Source.Kind,
-		))
-
-		err := e.client.Get(ctx, types.NamespacedName{
-			Name:      criterion.Source.Name,
-			Namespace: criterion.Source.Namespace,
-		}, u)
+		resolved, found, err := e.resolveSource(ctx, criterion.Source, ec)
 		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, fmt.Sprintf("Resource %s/%s not found", criterion.Source.Kind, criterion.Source.Name), nil
-			}
-
 			return false, "", fmt.Errorf("get resource %s/%s: %w", criterion.Source.Kind, criterion.Source.Name, err)
 		}
-		obj = u.Object
-	} else {
-		data, err := json.Marshal(targetAddon)
-		if err != nil {
-			return false, "", fmt.Errorf("marshal addon: %w", err)
+		if !found {
+			return false, fmt.Sprintf("Resource %s/%s not found", criterion.Source.Kind, criterion.Source.Name), nil
 		}
-		var m map[string]any
-		if err := json.Unmarshal(data, &m); err != nil {
-			return false, "", fmt.Errorf("unmarshal addon: %w", err)
+		obj = resolved
+	} else {
+		m, err := ec.addonMap()
+		if err != nil {
+			return false, "", err
 		}
 		obj = m
 	}

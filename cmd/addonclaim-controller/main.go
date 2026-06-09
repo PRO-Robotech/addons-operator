@@ -27,6 +27,9 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
+	_ "go.uber.org/automaxprocs" // GOMAXPROCS from cgroup CPU quota
+
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -97,6 +100,7 @@ func main() {
 	var kubeAPIQPS float64
 	var kubeAPIBurst int
 	var maxConcurrentReconciles int
+	var pprofAddr string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -125,6 +129,9 @@ func main() {
 		"Burst to use for the management-cluster Kubernetes API client. Raise alongside kube-api-qps.")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", defaultMaxConcurrentReconciles,
 		"Number of concurrent AddonClaim reconciler workers.")
+	flag.StringVar(&pprofAddr, "pprof-bind-address", "127.0.0.1:8082",
+		"Address for the pprof/diagnostics endpoint. Bind to loopback so it is reachable only via "+
+			"`kubectl port-forward` (access gated by pods/portforward RBAC). Set \"\" or \"0\" to disable.")
 	opts := zap.Options{
 		Development: true,
 		// Only add stack traces for panic level logs
@@ -135,6 +142,15 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	if limit, err := memlimit.SetGoMemLimitWithOpts(
+		memlimit.WithRatio(0.9),
+		memlimit.WithProvider(memlimit.FromCgroup),
+	); err != nil {
+		setupLog.Info("GOMEMLIMIT not set from cgroup; using GOMEMLIMIT env or default", "reason", err.Error())
+	} else {
+		setupLog.Info("GOMEMLIMIT configured from cgroup", "bytes", limit)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -210,6 +226,7 @@ func main() {
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "addonclaim-controller.in-cloud.io",
 		GracefulShutdownTimeout: &gracefulShutdownTimeout,
+		PprofBindAddress:        pprofAddr,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

@@ -3,6 +3,7 @@ module addons-operator
 go 1.24.6
 
 require (
+	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/Masterminds/sprig/v3 v3.3.0
 	github.com/argoproj/argo-cd/v2 v2.14.10
 	github.com/argoproj/gitops-engine v0.7.1-0.20250521000818-c08b0a72c1f1
@@ -13,6 +14,7 @@ require (
 	github.com/onsi/gomega v1.34.2
 	github.com/stretchr/testify v1.11.1
 	github.com/theory/jsonpath v0.10.2
+	go.uber.org/automaxprocs v1.6.0
 	go.uber.org/zap v1.26.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.31.2
@@ -114,6 +116,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0 // indirect
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
+	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pjbgf/sha1cd v0.3.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
