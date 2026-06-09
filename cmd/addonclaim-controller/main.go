@@ -97,6 +97,7 @@ func main() {
 	var kubeAPIQPS float64
 	var kubeAPIBurst int
 	var maxConcurrentReconciles int
+	var pprofAddr string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -125,6 +126,9 @@ func main() {
 		"Burst to use for the management-cluster Kubernetes API client. Raise alongside kube-api-qps.")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", defaultMaxConcurrentReconciles,
 		"Number of concurrent AddonClaim reconciler workers.")
+	flag.StringVar(&pprofAddr, "pprof-bind-address", "127.0.0.1:8082",
+		"Address for the pprof/diagnostics endpoint. Bind to loopback so it is reachable only via "+
+			"`kubectl port-forward` (access gated by pods/portforward RBAC). Set \"\" or \"0\" to disable.")
 	opts := zap.Options{
 		Development: true,
 		// Only add stack traces for panic level logs
@@ -210,6 +214,11 @@ func main() {
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "addonclaim-controller.in-cloud.io",
 		GracefulShutdownTimeout: &gracefulShutdownTimeout,
+		// PprofBindAddress serves net/http/pprof on a dedicated listener (separate from metrics).
+		// Default binds to loopback => reachable only through `kubectl port-forward`, keeping the
+		// profile behind pods/portforward RBAC. Always-on by design: enabling pprof on an incident
+		// would require a restart, which erases the very memory state under investigation.
+		PprofBindAddress: pprofAddr,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
