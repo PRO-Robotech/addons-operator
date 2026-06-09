@@ -37,11 +37,7 @@ import (
 )
 
 type RuleEvaluator struct {
-	client client.Client
-	// cacheBackedGK is the set of GroupKinds that already have a shared informer in
-	// the manager cache (the types the controllers watch). Reads of these are served
-	// from cache; any other kind stays on the uncached unstructured path so we never
-	// start a new cluster-wide informer (e.g. for ConfigMaps or Secrets).
+	client        client.Client
 	cacheBackedGK map[schema.GroupKind]bool
 }
 
@@ -52,10 +48,6 @@ func NewRuleEvaluator(c client.Client) *RuleEvaluator {
 	}
 }
 
-// buildCacheBackedGK derives, from the scheme, the GroupKinds whose informers the
-// manager already runs (Addon, AddonPhase, AddonValue, Application). Types absent
-// from the scheme are simply skipped, so unit tests with a minimal scheme degrade
-// gracefully to the unstructured path.
 func buildCacheBackedGK(s *runtime.Scheme) map[schema.GroupKind]bool {
 	gks := make(map[schema.GroupKind]bool)
 	if s == nil {
@@ -80,12 +72,7 @@ func buildCacheBackedGK(s *runtime.Scheme) map[schema.GroupKind]bool {
 	return gks
 }
 
-// evalContext carries the target addon plus per-EvaluateRules read caches. A single
-// AddonPhase reconcile evaluates many criteria that often reference the same source
-// object and always reference the same target addon; without memoization each
-// criterion re-fetched the source (uncached API GET) and re-marshalled the addon.
-// The context lives on the stack for one EvaluateRules call, so it is safe to share
-// across concurrent reconcile workers.
+// evalContext memoizes source reads and the target-addon map for one EvaluateRules call.
 type evalContext struct {
 	targetAddon *addonsv1alpha1.Addon
 
@@ -105,8 +92,6 @@ func newEvalContext(addon *addonsv1alpha1.Addon) *evalContext {
 	return &evalContext{targetAddon: addon, sources: make(map[string]sourceEntry)}
 }
 
-// addonMap converts the target addon to a map exactly once per EvaluateRules call,
-// preserving the original json round-trip semantics for JSONPath evaluation.
 func (ec *evalContext) addonMap() (map[string]any, error) {
 	if ec.targetDone {
 		return ec.targetMap, ec.targetErr
@@ -128,8 +113,6 @@ func (ec *evalContext) addonMap() (map[string]any, error) {
 	return ec.targetMap, nil
 }
 
-// resolveSource fetches the criterion source object at most once per evaluation,
-// caching both hits and not-found results.
 func (e *RuleEvaluator) resolveSource(
 	ctx context.Context,
 	src *addonsv1alpha1.CriterionSource,
@@ -154,10 +137,8 @@ func (e *RuleEvaluator) resolveSource(
 	return obj, true, nil
 }
 
-// getSource reads a source object. For kinds already backed by a cache informer it
-// reads the typed object (a cache hit with no API round-trip — this removes the
-// io.ReadAll churn); for every other kind it falls back to an uncached unstructured
-// GET so no new cluster-wide informer is started.
+// Cache-backed kinds are read typed (cache hit); other kinds stay unstructured/uncached
+// so no new cluster-wide informer is started.
 func (e *RuleEvaluator) getSource(
 	ctx context.Context,
 	src *addonsv1alpha1.CriterionSource,
@@ -178,7 +159,6 @@ func (e *RuleEvaluator) getSource(
 				return m, nil
 			}
 		}
-		// Scheme could not build a typed object: fall through to unstructured.
 	}
 
 	u := &unstructured.Unstructured{}

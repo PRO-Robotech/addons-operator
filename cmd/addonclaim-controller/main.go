@@ -28,7 +28,7 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
-	_ "go.uber.org/automaxprocs" // set GOMAXPROCS from the cgroup CPU quota to avoid CFS throttling
+	_ "go.uber.org/automaxprocs" // GOMAXPROCS from cgroup CPU quota
 
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -143,10 +143,6 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// Align GOMEMLIMIT with the cgroup memory limit so the GC collects aggressively as
-	// it approaches the container limit, instead of letting a transient allocation spike
-	// trip the OOM killer. GOMAXPROCS is aligned with the CPU quota via the automaxprocs
-	// import above, preventing CFS throttling that otherwise starves reconcile workers.
 	if limit, err := memlimit.SetGoMemLimitWithOpts(
 		memlimit.WithRatio(0.9),
 		memlimit.WithProvider(memlimit.FromCgroup),
@@ -230,11 +226,7 @@ func main() {
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "addonclaim-controller.in-cloud.io",
 		GracefulShutdownTimeout: &gracefulShutdownTimeout,
-		// PprofBindAddress serves net/http/pprof on a dedicated listener (separate from metrics).
-		// Default binds to loopback => reachable only through `kubectl port-forward`, keeping the
-		// profile behind pods/portforward RBAC. Always-on by design: enabling pprof on an incident
-		// would require a restart, which erases the very memory state under investigation.
-		PprofBindAddress: pprofAddr,
+		PprofBindAddress:        pprofAddr,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
