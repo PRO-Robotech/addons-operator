@@ -27,6 +27,9 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
+	_ "go.uber.org/automaxprocs" // set GOMAXPROCS from the cgroup CPU quota to avoid CFS throttling
+
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -139,6 +142,19 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	// Align GOMEMLIMIT with the cgroup memory limit so the GC collects aggressively as
+	// it approaches the container limit, instead of letting a transient allocation spike
+	// trip the OOM killer. GOMAXPROCS is aligned with the CPU quota via the automaxprocs
+	// import above, preventing CFS throttling that otherwise starves reconcile workers.
+	if limit, err := memlimit.SetGoMemLimitWithOpts(
+		memlimit.WithRatio(0.9),
+		memlimit.WithProvider(memlimit.FromCgroup),
+	); err != nil {
+		setupLog.Info("GOMEMLIMIT not set from cgroup; using GOMEMLIMIT env or default", "reason", err.Error())
+	} else {
+		setupLog.Info("GOMEMLIMIT configured from cgroup", "bytes", limit)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
