@@ -133,7 +133,8 @@ type AddonClaimStatus struct {
 	// +optional
 	ExternalManagedControlPlane *bool `json:"externalManagedControlPlane,omitempty"`
 
-	// Version reflects the Kubernetes version from the claim's variables.
+	// Version reflects spec.version, published only once the remote Addon is confirmed
+	// reconciled at its current generation. Never cleared once set.
 	// Populated only when annotation "external-status/type" is present.
 	// +optional
 	Version string `json:"version,omitempty"`
@@ -150,6 +151,15 @@ type RemoteAddonStatus struct {
 	// Deployed indicates the remote Addon has been deployed.
 	// +optional
 	Deployed bool `json:"deployed,omitempty"`
+
+	// Generation is metadata.generation of the remote Addon at read time.
+	// +optional
+	Generation int64 `json:"generation,omitempty"`
+
+	// ObservedGeneration is status.observedGeneration of the remote Addon at read time.
+	// Conditions describe a previous revision unless it equals Generation.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// Conditions from the remote Addon.
 	// +optional

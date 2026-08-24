@@ -516,12 +516,14 @@ func (r *Reconciler) syncRemoteAddonStatus(ctx context.Context, rc client.Client
 		return
 	}
 
-	ready := isAddonReady(remoteAddon)
+	ready := isAddonReadyAtCurrentGeneration(remoteAddon)
 	claim.Status.Ready = &ready
 	claim.Status.Deployed = remoteAddon.Status.Deployed
 	claim.Status.RemoteAddonStatus = &addonsv1alpha1.RemoteAddonStatus{
-		Deployed:   remoteAddon.Status.Deployed,
-		Conditions: remoteAddon.Status.Conditions,
+		Deployed:           remoteAddon.Status.Deployed,
+		Generation:         remoteAddon.Generation,
+		ObservedGeneration: remoteAddon.Status.ObservedGeneration,
+		Conditions:         remoteAddon.Status.Conditions,
 	}
 }
 
@@ -556,7 +558,11 @@ func (r *Reconciler) syncExternalStatus(claim *addonsv1alpha1.AddonClaim) {
 		ControlPlaneInitialized: &cpInitialized,
 	}
 
-	claim.Status.Version = claim.Spec.Version
+	// Never clear an already published version: CAPI reads an empty status.version as
+	// "control plane is provisioning" and stops picking up the topology version.
+	if claim.Status.Ready != nil && *claim.Status.Ready {
+		claim.Status.Version = claim.Spec.Version
+	}
 }
 
 func (r *Reconciler) updateStatus(ctx context.Context, rctx *reconcileContext) (ctrl.Result, error) {
@@ -680,6 +686,18 @@ func (r *Reconciler) findClaimsForSecret(ctx context.Context, obj client.Object)
 	}
 
 	return requests
+}
+
+// isAddonReadyAtCurrentGeneration reports readiness only when the Addon controller has
+// already observed the current spec. Right after the claim updates the remote Addon its
+// conditions still describe the previous revision, and a latched Ready would be read as
+// "the new version is serving".
+func isAddonReadyAtCurrentGeneration(addon *addonsv1alpha1.Addon) bool {
+	if addon.Status.ObservedGeneration != addon.Generation {
+		return false
+	}
+
+	return isAddonReady(addon)
 }
 
 func isAddonReady(addon *addonsv1alpha1.Addon) bool {

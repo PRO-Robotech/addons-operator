@@ -17,6 +17,8 @@ package controller
 import (
 	"time"
 
+	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/gitops-engine/pkg/health"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -613,13 +615,39 @@ spec:
 			return c.Status.ExternalManagedControlPlane != nil
 		}, claimTimeout, interval).Should(BeTrue())
 
-		By("Verifying CAPI status fields")
+		By("Verifying the version is withheld until the remote Addon is confirmed reconciled")
 		c := &addonsv1alpha1.AddonClaim{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, c)).To(Succeed())
 		Expect(c.Status.ExternalManagedControlPlane).To(HaveValue(BeTrue()))
-		Expect(c.Status.Version).To(Equal("1.5.0"))
 		Expect(c.Status.Initialized).NotTo(BeNil())
 		Expect(c.Status.Initialization).NotTo(BeNil())
+		Expect(c.Status.Version).To(BeEmpty())
+
+		By("Driving the remote Addon to Ready through a synced and healthy Application")
+		waitForApplication(addonName, "argocd")
+		Eventually(func() error {
+			app := &argocdv1alpha1.Application{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: addonName, Namespace: "argocd"}, app); err != nil {
+				return err
+			}
+			app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+			app.Status.Health.Status = health.HealthStatusHealthy
+			if app.Spec.Source != nil {
+				app.Status.Sync.ComparedTo.Source = *app.Spec.Source
+			}
+
+			return k8sClient.Update(ctx, app)
+		}, claimTimeout, interval).Should(Succeed())
+
+		By("Verifying the version is published once the Addon is ready")
+		Eventually(func() string {
+			current := &addonsv1alpha1.AddonClaim{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: claimName, Namespace: testNamespace}, current); err != nil {
+				return ""
+			}
+
+			return current.Status.Version
+		}, claimTimeout, interval).Should(Equal("1.5.0"))
 
 		By("Cleanup")
 		deleteAddonClaim(claimName, testNamespace)
