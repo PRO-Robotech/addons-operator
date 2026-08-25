@@ -290,10 +290,22 @@ spec:
                   deployed:
                     description: Deployed indicates the remote Addon has been deployed.
                     type: boolean
+                  generation:
+                    description: Generation is metadata.generation of the remote Addon
+                      at read time.
+                    format: int64
+                    type: integer
+                  observedGeneration:
+                    description: |-
+                      ObservedGeneration is status.observedGeneration of the remote Addon at read time.
+                      Conditions describe a previous revision unless it equals Generation.
+                    format: int64
+                    type: integer
                 type: object
               version:
                 description: |-
-                  Version reflects the Kubernetes version from the claim's variables.
+                  Version reflects spec.version, published only once the remote Addon is confirmed
+                  reconciled at its current generation. Never cleared once set.
                   Populated only when annotation "external-status/type" is present.
                 type: string
             type: object

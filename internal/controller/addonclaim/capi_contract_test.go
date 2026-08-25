@@ -31,10 +31,14 @@ import (
 )
 
 func TestSyncExternalStatus(t *testing.T) {
+	const cpAnnotation = "external-status/type"
+
 	tests := []struct {
 		name               string
 		annotations        map[string]string
 		remoteAddonStatus  *addonsv1alpha1.RemoteAddonStatus
+		ready              *bool
+		priorVersion       string
 		specVersion        string
 		wantInitialized    *bool
 		wantInitialization *addonsv1alpha1.Initialization
@@ -42,11 +46,10 @@ func TestSyncExternalStatus(t *testing.T) {
 		wantVersion        string
 	}{
 		{
-			name:        "Deployed=True sets Initialized=true and Version",
-			annotations: map[string]string{"external-status/type": "control-plane"},
-			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Deployed: true,
-			},
+			name:               "Ready=true publishes spec.version",
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
+			ready:              boolPtr(true),
 			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(true),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
@@ -54,26 +57,44 @@ func TestSyncExternalStatus(t *testing.T) {
 			wantVersion:        "1.28.0",
 		},
 		{
-			name:        "Deployed=False sets Initialized=false",
-			annotations: map[string]string{"external-status/type": "control-plane"},
-			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Deployed: false,
-			},
+			name:               "Ready=false keeps the previously published version",
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
+			ready:              boolPtr(false),
+			priorVersion:       "1.27.0",
+			specVersion:        "1.28.0",
+			wantInitialized:    boolPtr(true),
+			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
+			wantExternalCP:     boolPtr(true),
+			wantVersion:        "1.27.0",
+		},
+		{
+			name:               "Ready=false during first provisioning publishes nothing",
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: false},
+			ready:              boolPtr(false),
 			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(false),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(false)},
 			wantExternalCP:     boolPtr(true),
-			wantVersion:        "1.28.0",
+			wantVersion:        "",
 		},
 		{
-			name:        "no Deployed condition (only Ready) sets Initialized=false",
-			annotations: map[string]string{"external-status/type": "control-plane"},
-			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Deployed: false,
-				Conditions: []metav1.Condition{
-					{Type: "Ready", Status: metav1.ConditionTrue},
-				},
-			},
+			name:               "Ready=nil publishes nothing",
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
+			ready:              nil,
+			specVersion:        "1.28.0",
+			wantInitialized:    boolPtr(true),
+			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
+			wantExternalCP:     boolPtr(true),
+			wantVersion:        "",
+		},
+		{
+			name:               "Deployed drives Initialized independently of Ready",
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: false},
+			ready:              boolPtr(true),
 			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(false),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(false)},
@@ -82,18 +103,21 @@ func TestSyncExternalStatus(t *testing.T) {
 		},
 		{
 			name:               "nil RemoteAddonStatus sets Initialized=false",
-			annotations:        map[string]string{"external-status/type": "control-plane"},
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
 			remoteAddonStatus:  nil,
+			ready:              nil,
 			specVersion:        "1.28.0",
 			wantInitialized:    boolPtr(false),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(false)},
 			wantExternalCP:     boolPtr(true),
-			wantVersion:        "1.28.0",
+			wantVersion:        "",
 		},
 		{
 			name:               "without annotation clears all CAPI fields",
 			annotations:        nil,
 			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
+			ready:              boolPtr(true),
+			priorVersion:       "1.27.0",
 			specVersion:        "1.28.0",
 			wantInitialized:    nil,
 			wantInitialization: nil,
@@ -101,11 +125,11 @@ func TestSyncExternalStatus(t *testing.T) {
 			wantVersion:        "",
 		},
 		{
-			name:        "empty annotation value clears all CAPI fields",
-			annotations: map[string]string{"external-status/type": ""},
-			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Deployed: true,
-			},
+			name:               "empty annotation value clears all CAPI fields",
+			annotations:        map[string]string{cpAnnotation: ""},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
+			ready:              boolPtr(true),
+			priorVersion:       "1.27.0",
 			specVersion:        "1.28.0",
 			wantInitialized:    nil,
 			wantInitialization: nil,
@@ -113,11 +137,10 @@ func TestSyncExternalStatus(t *testing.T) {
 			wantVersion:        "",
 		},
 		{
-			name:        "spec.version empty returns empty Version",
-			annotations: map[string]string{"external-status/type": "control-plane"},
-			remoteAddonStatus: &addonsv1alpha1.RemoteAddonStatus{
-				Deployed: true,
-			},
+			name:               "empty spec.version publishes nothing",
+			annotations:        map[string]string{cpAnnotation: "control-plane"},
+			remoteAddonStatus:  &addonsv1alpha1.RemoteAddonStatus{Deployed: true},
+			ready:              boolPtr(true),
 			specVersion:        "",
 			wantInitialized:    boolPtr(true),
 			wantInitialization: &addonsv1alpha1.Initialization{ControlPlaneInitialized: boolPtr(true)},
@@ -144,6 +167,8 @@ func TestSyncExternalStatus(t *testing.T) {
 				},
 				Status: addonsv1alpha1.AddonClaimStatus{
 					RemoteAddonStatus: tt.remoteAddonStatus,
+					Ready:             tt.ready,
+					Version:           tt.priorVersion,
 				},
 			}
 
@@ -153,6 +178,60 @@ func TestSyncExternalStatus(t *testing.T) {
 			assert.Equal(t, tt.wantInitialization, claim.Status.Initialization, "Initialization")
 			assert.Equal(t, tt.wantExternalCP, claim.Status.ExternalManagedControlPlane, "ExternalManagedControlPlane")
 			assert.Equal(t, tt.wantVersion, claim.Status.Version, "Version")
+		})
+	}
+}
+
+func TestIsAddonReadyAtCurrentGeneration(t *testing.T) {
+	readyCondition := []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue}}
+
+	tests := []struct {
+		name               string
+		generation         int64
+		observedGeneration int64
+		conditions         []metav1.Condition
+		want               bool
+	}{
+		{
+			name:               "Ready at the observed generation",
+			generation:         3,
+			observedGeneration: 3,
+			conditions:         readyCondition,
+			want:               true,
+		},
+		{
+			name:               "Ready latched from the previous revision is not trusted",
+			generation:         4,
+			observedGeneration: 3,
+			conditions:         readyCondition,
+			want:               false,
+		},
+		{
+			name:               "not Ready at the observed generation",
+			generation:         3,
+			observedGeneration: 3,
+			conditions:         []metav1.Condition{{Type: "Ready", Status: metav1.ConditionFalse}},
+			want:               false,
+		},
+		{
+			name:               "no conditions yet",
+			generation:         1,
+			observedGeneration: 1,
+			want:               false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-addon", Generation: tt.generation},
+				Status: addonsv1alpha1.AddonStatus{
+					ObservedGeneration: tt.observedGeneration,
+					Conditions:         tt.conditions,
+				},
+			}
+
+			assert.Equal(t, tt.want, isAddonReadyAtCurrentGeneration(addon))
 		})
 	}
 }
