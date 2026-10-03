@@ -262,12 +262,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	defaultSyncRetry, err := defaultSyncRetryFromFlags(retryLimit, retryDuration, retryFactor, retryMaxDuration)
-	if err != nil {
-		setupLog.Error(err, "invalid default sync retry flags")
-		os.Exit(1)
-	}
-	if defaultSyncRetry != nil {
+	var defaultSyncRetry *addonsv1alpha1.RetryStrategy
+	if retryLimit != 0 {
+		r, rerr := defaultSyncRetryFromFlags(retryLimit, retryDuration, retryFactor, retryMaxDuration)
+		if rerr != nil {
+			setupLog.Error(rerr, "invalid default sync retry flags")
+			os.Exit(1)
+		}
+		defaultSyncRetry = r
 		setupLog.Info("default sync retry", "limit", retryLimit, "duration", retryDuration,
 			"factor", retryFactor, "maxDuration", retryMaxDuration)
 	}

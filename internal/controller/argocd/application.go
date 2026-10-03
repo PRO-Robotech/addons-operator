@@ -63,6 +63,7 @@ func NewApplicationBuilder(opts ...BuilderOption) *ApplicationBuilder {
 	for _, o := range opts {
 		o(b)
 	}
+
 	return b
 }
 
