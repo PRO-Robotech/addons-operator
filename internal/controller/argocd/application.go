@@ -41,11 +41,29 @@ const (
 )
 
 // ApplicationBuilder constructs Argo CD Application resources from Addon specs.
-type ApplicationBuilder struct{}
+type ApplicationBuilder struct {
+	// defaultRetry — политика повтора синхронизации по умолчанию (флаги оператора, K8S-1228).
+	defaultRetry *addonsv1alpha1.RetryStrategy
+}
+
+// BuilderOption настраивает ApplicationBuilder.
+type BuilderOption func(*ApplicationBuilder)
+
+// WithDefaultSyncRetry задаёт политику повтора для Application, у Addon которых есть syncPolicy,
+// но нет своего retry (K8S-1228). Умолчание объявляется оператором, а не каждым Addon: Addon с
+// полем retry отверг бы apiserver со старой CRD (Argo CD применяет со строгой проверкой полей),
+// и свежая сборка со старым оператором бутстрапа встала бы на первом рендере. nil — умолчания нет.
+func WithDefaultSyncRetry(r *addonsv1alpha1.RetryStrategy) BuilderOption {
+	return func(b *ApplicationBuilder) { b.defaultRetry = r }
+}
 
 // NewApplicationBuilder creates a new ApplicationBuilder.
-func NewApplicationBuilder() *ApplicationBuilder {
-	return &ApplicationBuilder{}
+func NewApplicationBuilder(opts ...BuilderOption) *ApplicationBuilder {
+	b := &ApplicationBuilder{}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
 }
 
 func (b *ApplicationBuilder) Build(addon *addonsv1alpha1.Addon, namespace string, values map[string]any) (*argocdv1alpha1.Application, error) {
@@ -194,14 +212,19 @@ func (b *ApplicationBuilder) getSyncPolicy(addon *addonsv1alpha1.Addon) *argocdv
 	}
 
 	// K8S-1228: повтор неудачной синхронизации решает Argo CD по объявленной политике;
-	// оператор только переносит её в Application и сам синхронизацию не запускает.
-	if sp.Retry != nil {
-		result.Retry = &argocdv1alpha1.RetryStrategy{Limit: sp.Retry.Limit}
-		if sp.Retry.Backoff != nil {
+	// оператор только переносит её в Application и сам синхронизацию не запускает. Свой retry
+	// у Addon важнее умолчания оператора.
+	retry := sp.Retry
+	if retry == nil {
+		retry = b.defaultRetry
+	}
+	if retry != nil {
+		result.Retry = &argocdv1alpha1.RetryStrategy{Limit: retry.Limit}
+		if retry.Backoff != nil {
 			result.Retry.Backoff = &argocdv1alpha1.Backoff{
-				Duration:    sp.Retry.Backoff.Duration,
-				Factor:      sp.Retry.Backoff.Factor,
-				MaxDuration: sp.Retry.Backoff.MaxDuration,
+				Duration:    retry.Backoff.Duration,
+				Factor:      retry.Backoff.Factor,
+				MaxDuration: retry.Backoff.MaxDuration,
 			}
 		}
 	}

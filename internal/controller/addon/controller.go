@@ -70,6 +70,9 @@ type AddonReconciler struct {
 	Recorder                record.EventRecorder
 	MaxConcurrentReconciles int
 
+	// DefaultSyncRetry — политика повтора синхронизации по умолчанию для Application (K8S-1228).
+	DefaultSyncRetry *addonsv1alpha1.RetryStrategy
+
 	// Template engine for rendering Go templates in AddonValue strings.
 	// Stored in the reconciler to reuse the LRU template cache across reconciles.
 	templateEngine sources.TemplateEngine
@@ -382,7 +385,7 @@ func (r *AddonReconciler) applicationExists(ctx context.Context, addon *addonsv1
 
 func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addonsv1alpha1.Addon, helmValues map[string]any) error {
 	logger := log.FromContext(ctx)
-	builder := argocd.NewApplicationBuilder()
+	builder := argocd.NewApplicationBuilder(argocd.WithDefaultSyncRetry(r.DefaultSyncRetry))
 	appNamespace := addon.Spec.Backend.Namespace
 	appKey := types.NamespacedName{Name: addon.Name, Namespace: appNamespace}
 
