@@ -265,21 +265,13 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	addon := rctx.addon
 
 	if err := r.reconcileRemoteAddonValue(ctx, rc, claim, addon.Name); err != nil {
-		r.RemoteClients.RecordFailure(rctx.cacheKey)
-		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
-		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync AddonValue to remote cluster")
-		r.Recorder.Eventf(claim, "Warning", "AddonValueSyncFailed", "Failed to sync AddonValue: %v", err)
-		result, updateErr := r.updateStatus(ctx, rctx)
+		result, updateErr := r.handleRemoteSyncError(ctx, rctx, err, "AddonValue")
 
 		return result, updateErr, true
 	}
 
 	if err := r.reconcileRemoteAddon(ctx, rc, addon); err != nil {
-		r.RemoteClients.RecordFailure(rctx.cacheKey)
-		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
-		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync Addon to remote cluster")
-		r.Recorder.Eventf(claim, "Warning", "AddonSyncFailed", "Failed to sync Addon: %v", err)
-		result, updateErr := r.updateStatus(ctx, rctx)
+		result, updateErr := r.handleRemoteSyncError(ctx, rctx, err, "Addon")
 
 		return result, updateErr, true
 	}
@@ -291,6 +283,37 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	r.syncExternalStatus(claim)
 
 	return ctrl.Result{}, nil, false
+}
+
+// handleRemoteSyncError разбирает отказ записи в удалённый кластер по классу (K8S-1087).
+// Общую паузу кластера двигает только недоступность: «CRD ещё нет», отказ вебхука и конфликт
+// штатны при сборке, и пауза от них задерживала client CP всех заявок кластера на минуты.
+func (r *Reconciler) handleRemoteSyncError(ctx context.Context, rctx *reconcileContext, err error, kind string) (ctrl.Result, error) {
+	claim := rctx.claim
+	cm := rctx.cm
+
+	switch classifyRemoteError(err) {
+	case remoteNotReady:
+		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteNotReady, err.Error())
+		cm.SetProgressing(ReasonRemoteNotReady, ReasonRemoteNotReady,
+			fmt.Sprintf("Remote cluster is not ready to accept %s yet: %v", kind, err))
+		r.Recorder.Eventf(claim, "Normal", kind+"SyncDeferred", "Remote cluster not ready for %s, retrying: %v", kind, err)
+
+		return r.updateStatusAndRequeue(ctx, rctx, notReadyRequeue(cm.GetCondition(TypeAddonSynced), time.Now()))
+	case remoteRejected:
+		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteRequestInvalid, err.Error())
+		cm.SetDegraded(ReasonRemoteRequestInvalid, ReasonRemoteRequestInvalid, "Remote cluster rejected "+kind)
+		r.Recorder.Eventf(claim, "Warning", kind+"SyncFailed", "Failed to sync %s: %v", kind, err)
+
+		return r.updateStatus(ctx, rctx)
+	default:
+		r.RemoteClients.RecordFailure(rctx.cacheKey)
+		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
+		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, fmt.Sprintf("Failed to sync %s to remote cluster", kind))
+		r.Recorder.Eventf(claim, "Warning", kind+"SyncFailed", "Failed to sync %s: %v", kind, err)
+
+		return r.updateStatus(ctx, rctx)
+	}
 }
 
 // determineRequeue updates status and decides whether to requeue based on remote Addon readiness.
