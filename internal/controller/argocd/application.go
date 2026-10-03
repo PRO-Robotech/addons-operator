@@ -193,6 +193,19 @@ func (b *ApplicationBuilder) getSyncPolicy(addon *addonsv1alpha1.Addon) *argocdv
 		}
 	}
 
+	// K8S-1228: повтор неудачной синхронизации решает Argo CD по объявленной политике;
+	// оператор только переносит её в Application и сам синхронизацию не запускает.
+	if sp.Retry != nil {
+		result.Retry = &argocdv1alpha1.RetryStrategy{Limit: sp.Retry.Limit}
+		if sp.Retry.Backoff != nil {
+			result.Retry.Backoff = &argocdv1alpha1.Backoff{
+				Duration:    sp.Retry.Backoff.Duration,
+				Factor:      sp.Retry.Backoff.Factor,
+				MaxDuration: sp.Retry.Backoff.MaxDuration,
+			}
+		}
+	}
+
 	return result
 }
 
