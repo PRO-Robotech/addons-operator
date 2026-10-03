@@ -160,3 +160,38 @@ func TestHandleRemoteSyncError_Backoff(t *testing.T) {
 		})
 	}
 }
+
+// Частый опрос — только у заявки control-plane (external-status) после создания удалённого
+// Application и до развёртывания; остальные — прежний интервал.
+func TestReadinessPollInterval(t *testing.T) {
+	r := &Reconciler{}
+	appCreated := &addonsv1alpha1.RemoteAddonStatus{Conditions: []metav1.Condition{
+		{Type: "ApplicationCreated", Status: metav1.ConditionTrue}}}
+	appNotYet := &addonsv1alpha1.RemoteAddonStatus{Conditions: []metav1.Condition{
+		{Type: "ApplicationCreated", Status: metav1.ConditionFalse}}}
+	ext := map[string]string{"external-status/type": "ControlPlane"}
+
+	cases := []struct {
+		name     string
+		ann      map[string]string
+		deployed bool
+		remote   *addonsv1alpha1.RemoteAddonStatus
+		want     time.Duration
+	}{
+		{"control-plane, Application создан", ext, false, appCreated, externalStatusPollInterval},
+		{"control-plane, Application ещё нет", ext, false, appNotYet, DefaultPollingInterval},
+		{"control-plane, статуса нет", ext, false, nil, DefaultPollingInterval},
+		{"control-plane, уже развёрнут", ext, true, appCreated, DefaultPollingInterval},
+		{"обычная заявка (контроль)", nil, false, appCreated, DefaultPollingInterval},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			claim := &addonsv1alpha1.AddonClaim{ObjectMeta: metav1.ObjectMeta{Annotations: tc.ann}}
+			claim.Status.Deployed = tc.deployed
+			claim.Status.RemoteAddonStatus = tc.remote
+			if got := r.readinessPollInterval(claim); got != tc.want {
+				t.Errorf("readinessPollInterval = %s, ждали %s", got, tc.want)
+			}
+		})
+	}
+}

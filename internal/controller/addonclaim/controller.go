@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -45,15 +46,17 @@ import (
 )
 
 const (
-	DefaultPollingInterval   = 15 * time.Second
-	requeueIntervalDegraded  = 60 * time.Second
-	finalizerName            = "addons.in-cloud.io/addonclaim-finalizer"
-	secretKubeconfigKey      = "value"
-	addonLabelKey            = "addons.in-cloud.io/addon"
-	valuesLabelKey           = "addons.in-cloud.io/values"
-	valuesLabelValue         = "claim"
-	pauseAnnotationKey       = "addons.in-cloud.io/paused"
-	pauseAnnotationValueTrue = "true"
+	DefaultPollingInterval = 15 * time.Second
+	// Опрос готовности control-plane клиента после создания его Application (K8S-1229).
+	externalStatusPollInterval = 2 * time.Second
+	requeueIntervalDegraded    = 60 * time.Second
+	finalizerName              = "addons.in-cloud.io/addonclaim-finalizer"
+	secretKubeconfigKey        = "value"
+	addonLabelKey              = "addons.in-cloud.io/addon"
+	valuesLabelKey             = "addons.in-cloud.io/values"
+	valuesLabelValue           = "claim"
+	pauseAnnotationKey         = "addons.in-cloud.io/paused"
+	pauseAnnotationValueTrue   = "true"
 
 	// Condition types specific to AddonClaim.
 	TypeTemplateRendered = "TemplateRendered"
@@ -331,7 +334,21 @@ func (r *Reconciler) determineRequeue(ctx context.Context, rctx *reconcileContex
 
 	cm.SetProgressing(ReasonAddonNotReady, pkgconditions.ReasonReconciling, "Waiting for remote Addon to become ready")
 
-	return r.updateStatusAndRequeue(ctx, rctx, r.pollingInterval())
+	return r.updateStatusAndRequeue(ctx, rctx, r.readinessPollInterval(claim))
+}
+
+// readinessPollInterval — частый опрос только у заявки, чью готовность читает CAPI
+// (external-status, control-plane клиента), и только на последнем отрезке: удалённый
+// Application уже создан, ждать осталось развёртывания. Готовность client-cp лежит на пути
+// сборки, и опрос раз в 15 с добавлял к нему в среднем 7 с (K8S-1229).
+func (r *Reconciler) readinessPollInterval(claim *addonsv1alpha1.AddonClaim) time.Duration {
+	if claim.Annotations["external-status/type"] == "" || claim.Status.Deployed ||
+		claim.Status.RemoteAddonStatus == nil ||
+		!meta.IsStatusConditionTrue(claim.Status.RemoteAddonStatus.Conditions, "ApplicationCreated") {
+		return r.pollingInterval()
+	}
+
+	return externalStatusPollInterval
 }
 
 func (r *Reconciler) reconcileDelete(ctx context.Context, claim *addonsv1alpha1.AddonClaim) (ctrl.Result, error) {
