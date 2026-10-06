@@ -367,6 +367,9 @@ var _ = Describe("AddonPhase Controller", func() {
 				}
 				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
 				app.Status.Health.Status = health.HealthStatusHealthy
+				if app.Spec.Source != nil {
+					app.Status.Sync.ComparedTo.Source = *app.Spec.Source
+				}
 
 				return k8sClient.Update(ctx, app)
 			}, timeout, interval).Should(Succeed())
@@ -456,6 +459,9 @@ var _ = Describe("AddonPhase Controller", func() {
 				}
 				app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
 				app.Status.Health.Status = health.HealthStatusHealthy
+				if app.Spec.Source != nil {
+					app.Status.Sync.ComparedTo.Source = *app.Spec.Source
+				}
 
 				return k8sClient.Update(ctx, app)
 			}, timeout, interval).Should(Succeed())
