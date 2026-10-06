@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
+	"addons-operator/internal/controller/conditions"
 )
 
 var _ = Describe("AddonPhase Controller", func() {
@@ -495,6 +496,86 @@ var _ = Describe("AddonPhase Controller", func() {
 			By("Cleanup")
 			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+		})
+
+		It("should not latch rule.Deployed before Argo CD compares the values the rule introduced", func() {
+			name := uniqueName("rule-deploy-stale")
+			valueName := name + "-phase"
+			ruleLabels := map[string]string{
+				"addons.in-cloud.io/addon":           name,
+				"addons.in-cloud.io/exp-stale-latch": "true",
+			}
+
+			By("Creating target Addon and bringing it to Synced+Healthy")
+			addon := &addonsv1alpha1.Addon{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonSpec{
+					Chart:           "test-chart",
+					RepoURL:         "https://charts.example.com",
+					Version:         "1.0.0",
+					TargetCluster:   "in-cluster",
+					TargetNamespace: "default",
+					Backend: addonsv1alpha1.BackendSpec{
+						Type:      "argocd",
+						Namespace: "argocd",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, addon)).To(Succeed())
+			waitForApplication(name, "argocd")
+			markApplicationSyncedHealthy(name, "argocd")
+			waitForCondition(name, conditions.TypeSynced, metav1.ConditionTrue)
+			waitForCondition(name, conditions.TypeHealthy, metav1.ConditionTrue)
+
+			By("Creating an AddonValue selected only by the phase rule")
+			createTestAddonValue(valueName, name, map[string]any{"phaseKey": "phase-value"},
+				map[string]string{"addons.in-cloud.io/exp-stale-latch": "true"})
+
+			By("Creating AddonPhase with an always-on rule pulling that AddonValue")
+			phase := &addonsv1alpha1.AddonPhase{
+				ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: addonsv1alpha1.AddonPhaseSpec{
+					Rules: []addonsv1alpha1.PhaseRule{{
+						Name: "stale-latch",
+						Selector: addonsv1alpha1.ValuesSelector{
+							Name:        "stale-latch",
+							Priority:    10,
+							MatchLabels: ruleLabels,
+						},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, phase)).To(Succeed())
+			waitForPhaseRuleMatched(name, "stale-latch", true)
+
+			By("Verifying rule.Deployed stays false while Argo CD has not compared the new values")
+			Consistently(func() bool {
+				return phaseRuleDeployed(name, "stale-latch")
+			}, 5*time.Second, interval).Should(BeFalse(),
+				"Deployed must not latch on Synced/Healthy computed for the previous spec")
+
+			By("Verifying the Application spec carries the values introduced by the rule")
+			Eventually(func() any {
+				app := &argocdv1alpha1.Application{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: "argocd"}, app); err != nil {
+					return nil
+				}
+
+				return getApplicationValues(app)["phaseKey"]
+			}, timeout, interval).Should(Equal("phase-value"))
+
+			By("Letting Argo CD compare and sync the new spec")
+			markApplicationSyncedHealthy(name, "argocd")
+
+			By("Verifying rule.Deployed latches once the new values are deployed")
+			Eventually(func() bool {
+				return phaseRuleDeployed(name, "stale-latch")
+			}, timeout, interval).Should(BeTrue())
+
+			By("Cleanup")
+			Expect(k8sClient.Delete(ctx, phase)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, addon)).To(Succeed())
+			deleteAddonValue(valueName)
 		})
 	})
 

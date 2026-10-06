@@ -123,6 +123,12 @@ type AddonStatus struct {
 	// +optional
 	ValuesHash string `json:"valuesHash,omitempty"`
 
+	// ObservedPhaseValuesSelectorHash identifies the phaseValuesSelector that the
+	// Synced and Healthy conditions were last evaluated against.
+	// Empty until the Application has been evaluated with a non-empty phaseValuesSelector.
+	// +optional
+	ObservedPhaseValuesSelectorHash string `json:"observedPhaseValuesSelectorHash,omitempty"`
+
 	// Deployed indicates that the Addon has been successfully deployed at least once.
 	// Once set to true, this field is never reset to false.
 	// +optional
