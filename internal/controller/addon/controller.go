@@ -90,6 +90,7 @@ func (r *AddonReconciler) apiReader() client.Reader {
 
 // applyStatus updates addon.Status with retry-on-conflict, re-reading fresh
 // from the apiserver each attempt to avoid stale informer-cache versions.
+// PhaseValuesSelector is owned by AddonPhase, so the stored value is kept.
 func (r *AddonReconciler) applyStatus(ctx context.Context, addon *addonsv1alpha1.Addon) error {
 	key := client.ObjectKeyFromObject(addon)
 	desired := addon.Status
@@ -99,7 +100,9 @@ func (r *AddonReconciler) applyStatus(ctx context.Context, addon *addonsv1alpha1
 		if err := r.apiReader().Get(ctx, key, fresh); err != nil {
 			return err
 		}
+		phaseSelectors := fresh.Status.PhaseValuesSelector
 		fresh.Status = desired
+		fresh.Status.PhaseValuesSelector = phaseSelectors
 
 		return r.Status().Update(ctx, fresh)
 	})
