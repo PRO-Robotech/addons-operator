@@ -422,26 +422,26 @@ spec:
         command:
         - /manager
         args:
-        - --health-probe-bind-address=:8082
+        - --health-probe-bind-address=:8081
         - --metrics-bind-address=0
         - --polling-interval=5s
         env:
         - name: ENABLE_WEBHOOKS
           value: "false"
         ports:
-        - containerPort: 8082
+        - containerPort: 8081
           name: healthz
           protocol: TCP
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8082
+            port: 8081
           initialDelaySeconds: 15
           periodSeconds: 20
         readinessProbe:
           httpGet:
             path: /readyz
-            port: 8082
+            port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
         resources:
