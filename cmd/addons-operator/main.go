@@ -142,6 +142,15 @@ func main() {
 		// This keeps ERROR logs clean for business errors
 		StacktraceLevel: zapcore.PanicLevel,
 	}
+	// K8S-1228: политика повтора синхронизации по умолчанию для Application. Повтор делает Argo CD
+	// (spec.syncPolicy.retry); limit 0 — умолчания нет, Application как раньше.
+	var retryLimit, retryFactor int64
+	var retryDuration, retryMaxDuration string
+	flag.Int64Var(&retryLimit, "default-sync-retry-limit", 0,
+		"Число повторов неудачной синхронизации по умолчанию (0 — не задавать, 1..100).")
+	flag.StringVar(&retryDuration, "default-sync-retry-backoff-duration", "30s", "Первая пауза между повторами.")
+	flag.Int64Var(&retryFactor, "default-sync-retry-backoff-factor", 2, "Множитель паузы.")
+	flag.StringVar(&retryMaxDuration, "default-sync-retry-backoff-max-duration", "10m", "Потолок паузы.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -253,12 +262,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	var defaultSyncRetry *addonsv1alpha1.RetryStrategy
+	if retryLimit != 0 {
+		r, rerr := defaultSyncRetryFromFlags(retryLimit, retryDuration, retryFactor, retryMaxDuration)
+		if rerr != nil {
+			setupLog.Error(rerr, "invalid default sync retry flags")
+			os.Exit(1)
+		}
+		defaultSyncRetry = r
+		setupLog.Info("default sync retry", "limit", retryLimit, "duration", retryDuration,
+			"factor", retryFactor, "maxDuration", retryMaxDuration)
+	}
 	if err := (&addonctrl.AddonReconciler{
 		Client:                  mgr.GetClient(),
 		APIReader:               mgr.GetAPIReader(),
 		Scheme:                  mgr.GetScheme(),
 		Recorder:                mgr.GetEventRecorderFor("addon-controller"),
 		MaxConcurrentReconciles: maxConcurrentReconciles,
+		DefaultSyncRetry:        defaultSyncRetry,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Addon")
 		os.Exit(1)

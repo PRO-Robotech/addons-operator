@@ -275,6 +275,44 @@ type SyncPolicy struct {
 	// when CreateNamespace=true sync option is used.
 	// +optional
 	ManagedNamespaceMetadata *ManagedNamespaceMetadata `json:"managedNamespaceMetadata,omitempty"`
+
+	// Retry — повтор неудачной синхронизации самим Argo CD (spec.syncPolicy.retry Application).
+	// Без него Argo CD повторяет автосинхронизацию 5 раз (около 155 с) и после этого ту же ревизию
+	// не трогает: Application остаётся в Error до ручной синхронизации. Повтор ограничен —
+	// бесконечный (limit -1 в Argo CD) схемой не допускается (K8S-1228).
+	// +optional
+	Retry *RetryStrategy `json:"retry,omitempty"`
+}
+
+// RetryStrategy — ограниченный повтор неудачной синхронизации (K8S-1228).
+type RetryStrategy struct {
+	// Limit — наибольшее число повторов неудачной синхронизации.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	Limit int64 `json:"limit,omitempty"`
+
+	// Backoff — пауза между повторами.
+	// +optional
+	Backoff *Backoff `json:"backoff,omitempty"`
+}
+
+// Backoff — пауза между повторами: Duration, умножаемая на Factor, не больше MaxDuration.
+type Backoff struct {
+	// Duration — первая пауза: число секунд или длительность Go («30s», «2m»).
+	// +kubebuilder:validation:Pattern=`^([0-9]+|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$`
+	// +optional
+	Duration string `json:"duration,omitempty"`
+
+	// Factor — множитель паузы для каждого следующего повтора.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	Factor *int64 `json:"factor,omitempty"`
+
+	// MaxDuration — потолок паузы: число секунд или длительность Go.
+	// +kubebuilder:validation:Pattern=`^([0-9]+|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$`
+	// +optional
+	MaxDuration string `json:"maxDuration,omitempty"`
 }
 
 // ManagedNamespaceMetadata defines labels and annotations for target namespace.

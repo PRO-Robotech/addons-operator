@@ -159,6 +159,41 @@ spec:
                             description: Labels to apply to the target namespace.
                             type: object
                         type: object
+                      retry:
+                        description: |-
+                          Retry — повтор неудачной синхронизации самим Argo CD (spec.syncPolicy.retry Application).
+                          Без него Argo CD повторяет автосинхронизацию 5 раз (около 155 с) и после этого ту же ревизию
+                          не трогает: Application остаётся в Error до ручной синхронизации. Повтор ограничен —
+                          бесконечный (limit -1 в Argo CD) схемой не допускается (K8S-1228).
+                        properties:
+                          backoff:
+                            description: Backoff — пауза между повторами.
+                            properties:
+                              duration:
+                                description: 'Duration — первая пауза: число секунд
+                                  или длительность Go («30s», «2m»).'
+                                pattern: ^([0-9]+|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$
+                                type: string
+                              factor:
+                                description: Factor — множитель паузы для каждого
+                                  следующего повтора.
+                                format: int64
+                                minimum: 1
+                                type: integer
+                              maxDuration:
+                                description: 'MaxDuration — потолок паузы: число секунд
+                                  или длительность Go.'
+                                pattern: ^([0-9]+|([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$
+                                type: string
+                            type: object
+                          limit:
+                            description: Limit — наибольшее число повторов неудачной
+                              синхронизации.
+                            format: int64
+                            maximum: 100
+                            minimum: 0
+                            type: integer
+                        type: object
                       syncOptions:
                         description: SyncOptions provides additional sync options.
                         items:
