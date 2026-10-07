@@ -18,6 +18,7 @@ package addon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -61,6 +62,9 @@ const (
 	pauseAnnotationValueTrue  = "true"
 )
 
+// errApplicationNotVisible means the Application exists but this reconcile cannot read it yet.
+var errApplicationNotVisible = errors.New("application exists but is not yet visible")
+
 // AddonReconciler reconciles Addon objects.
 type AddonReconciler struct {
 	client.Client
@@ -90,6 +94,7 @@ func (r *AddonReconciler) apiReader() client.Reader {
 
 // applyStatus updates addon.Status with retry-on-conflict, re-reading fresh
 // from the apiserver each attempt to avoid stale informer-cache versions.
+// PhaseValuesSelector is owned by AddonPhase, so the stored value is kept.
 func (r *AddonReconciler) applyStatus(ctx context.Context, addon *addonsv1alpha1.Addon) error {
 	key := client.ObjectKeyFromObject(addon)
 	desired := addon.Status
@@ -99,7 +104,9 @@ func (r *AddonReconciler) applyStatus(ctx context.Context, addon *addonsv1alpha1
 		if err := r.apiReader().Get(ctx, key, fresh); err != nil {
 			return err
 		}
+		phaseSelectors := fresh.Status.PhaseValuesSelector
 		fresh.Status = desired
+		fresh.Status.PhaseValuesSelector = phaseSelectors
 
 		return r.Status().Update(ctx, fresh)
 	})
@@ -228,7 +235,8 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return r.updateStatusAndRequeue(ctx, addon, cm, oldStatus, requeueIntervalStabilize)
 	}
 
-	if err := r.reconcileApplication(ctx, addon, finalValues); err != nil {
+	app, err := r.reconcileApplication(ctx, addon, finalValues)
+	if err != nil && !errors.Is(err, errApplicationNotVisible) {
 		logger.Error(nil, "Failed to reconcile Application", "addon", addon.Name, "reason", err.Error())
 		cm.SetOperationalCondition(conditions.TypeApplicationCreated, false, conditions.ReasonApplicationError, err.Error())
 		cm.SetDegraded(conditions.ReasonApplicationFailed, conditions.ReasonApplicationError, "Failed to create/update ArgoCD Application")
@@ -237,8 +245,8 @@ func (r *AddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	cm.SetOperationalCondition(conditions.TypeApplicationCreated, true, "ApplicationCreated", "Argo CD Application created/updated")
 
-	if err := r.translateApplicationStatus(ctx, addon, cm); err != nil {
-		logger.Error(nil, "Failed to translate Application status", "addon", addon.Name, "reason", err.Error())
+	if err == nil {
+		translateApplicationStatus(addon, cm, app)
 	}
 
 	if cm.IsConditionTrue(conditions.TypeSynced) && cm.IsConditionTrue(conditions.TypeHealthy) {
@@ -380,7 +388,12 @@ func (r *AddonReconciler) applicationExists(ctx context.Context, addon *addonsv1
 	return err == nil, err
 }
 
-func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addonsv1alpha1.Addon, helmValues map[string]any) error {
+// reconcileApplication returns the Application as last written or read.
+func (r *AddonReconciler) reconcileApplication(
+	ctx context.Context,
+	addon *addonsv1alpha1.Addon,
+	helmValues map[string]any,
+) (*argocdv1alpha1.Application, error) {
 	logger := log.FromContext(ctx)
 	builder := argocd.NewApplicationBuilder()
 	appNamespace := addon.Spec.Backend.Namespace
@@ -392,18 +405,18 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 	if apierrors.IsNotFound(err) { //nolint:nestif // create-or-update pattern
 		app, buildErr := builder.Build(addon, appNamespace, helmValues)
 		if buildErr != nil {
-			return buildErr
+			return nil, buildErr
 		}
 
 		logger.Info("Creating Argo CD Application", "name", app.Name, "namespace", app.Namespace)
 		if createErr := r.Create(ctx, app); createErr != nil {
 			if apierrors.IsAlreadyExists(createErr) {
-				return nil
+				return nil, errApplicationNotVisible
 			}
 			r.Recorder.Eventf(addon, "Warning", "ApplicationCreateFailed",
 				"Failed to create Application %s/%s: %v", app.Namespace, app.Name, createErr)
 
-			return createErr
+			return nil, createErr
 		}
 
 		r.Recorder.Eventf(addon, "Normal", "ApplicationCreated",
@@ -411,44 +424,44 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 
 		addon.Status.ApplicationRef = builder.GetApplicationRef(addon, appNamespace)
 
-		return nil
+		return app, nil
 	}
 
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	needsUpdate, reason, checkErr := builder.NeedsUpdate(existing, addon, appNamespace, helmValues)
 	if checkErr != nil {
-		return checkErr
+		return nil, checkErr
 	}
 
 	if !needsUpdate {
 		addon.Status.ApplicationRef = builder.GetApplicationRef(addon, appNamespace)
 
-		return nil
+		return existing, nil
 	}
 
 	logger.Info("Application needs update", "reason", reason)
 
+	updated := &argocdv1alpha1.Application{}
 	updateErr := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		fresh := &argocdv1alpha1.Application{}
-		if getErr := r.Get(ctx, appKey, fresh); getErr != nil {
+		if getErr := r.Get(ctx, appKey, updated); getErr != nil {
 			return getErr
 		}
 
-		if specErr := builder.UpdateSpec(fresh, addon, appNamespace, helmValues); specErr != nil {
+		if specErr := builder.UpdateSpec(updated, addon, appNamespace, helmValues); specErr != nil {
 			return specErr
 		}
 
-		return r.Update(ctx, fresh)
+		return r.Update(ctx, updated)
 	})
 
 	if updateErr != nil {
 		r.Recorder.Eventf(addon, "Warning", "ApplicationUpdateFailed",
 			"Failed to update Application %s/%s: %v", appNamespace, addon.Name, updateErr)
 
-		return updateErr
+		return nil, updateErr
 	}
 
 	logger.Info("Updated Argo CD Application", "name", addon.Name, "namespace", appNamespace)
@@ -457,26 +470,14 @@ func (r *AddonReconciler) reconcileApplication(ctx context.Context, addon *addon
 
 	addon.Status.ApplicationRef = builder.GetApplicationRef(addon, appNamespace)
 
-	return nil
+	return updated, nil
 }
 
-func (r *AddonReconciler) translateApplicationStatus(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager) error {
-	app := &argocdv1alpha1.Application{}
-	if err := r.Get(ctx, types.NamespacedName{
-		Name:      addon.Name,
-		Namespace: addon.Spec.Backend.Namespace,
-	}, app); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-
-		return err
-	}
-
-	translator := status.NewStatusTranslator()
-	translator.UpdateConditions(cm, app)
-
-	return nil
+// translateApplicationStatus records which phaseValuesSelector the Synced/Healthy
+// conditions were computed for, so AddonPhase can tell them apart from stale ones.
+func translateApplicationStatus(addon *addonsv1alpha1.Addon, cm *conditions.Manager, app *argocdv1alpha1.Application) {
+	status.NewStatusTranslator().UpdateConditions(cm, app)
+	addon.Status.ObservedPhaseValuesSelectorHash = values.SelectorsHash(addon.Status.PhaseValuesSelector)
 }
 
 func (r *AddonReconciler) updateStatus(ctx context.Context, addon *addonsv1alpha1.Addon, cm *conditions.Manager, oldStatus *addonsv1alpha1.AddonStatus) (ctrl.Result, error) {

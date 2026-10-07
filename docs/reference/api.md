@@ -46,6 +46,7 @@ Addon — основной ресурс для управления Helm-based �
 | `phaseValuesSelector` | [][ValuesSelector](#valuesselector) | Динамические селекторы из AddonPhase |
 | `applicationRef` | [ApplicationRef](#applicationref) | Ссылка на Argo CD Application |
 | `valuesHash` | string | Хеш объединённых values |
+| `observedPhaseValuesSelectorHash` | string | Хеш `phaseValuesSelector`, для которого последний раз вычислены conditions `Synced`/`Healthy` |
 | `conditions` | []Condition | Conditions текущего состояния |
 
 ### Status Conditions
@@ -295,6 +296,7 @@ AddonPhase — движок правил для условной активац�
 | `latched` | bool | keep=true criteria ранее совпали и будут пропущены при перевычислении |
 | `message` | string | Контекст вычисления |
 | `lastEvaluated` | Time | Время последнего вычисления |
+| `deployed` | bool | Latching: правило совпало, и Argo CD сравнил и признал Synced+Healthy спеку с его selector'ом. Не сбрасывается |
 
 ### Пример
 

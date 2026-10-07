@@ -269,14 +269,30 @@ func ComputeHash(values map[string]any) (string, error) {
 		return "", fmt.Errorf("marshal values: %w", err)
 	}
 
-	// Simple hash using FNV-1a
+	return fnv1aHex(data), nil
+}
+
+// SelectorsHash identifies an ordered selector list; an empty list hashes to "".
+func SelectorsHash(selectors []addonsv1alpha1.ValuesSelector) string {
+	if len(selectors) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(selectors)
+	if err != nil {
+		return ""
+	}
+
+	return fnv1aHex(data)
+}
+
+func fnv1aHex(data []byte) string {
 	var hash uint64 = 14695981039346656037
 	for _, b := range data {
 		hash ^= uint64(b)
 		hash *= 1099511628211
 	}
 
-	return fmt.Sprintf("%016x", hash), nil
+	return fmt.Sprintf("%016x", hash)
 }
 
 // canonicalJSON produces deterministic JSON with sorted keys.

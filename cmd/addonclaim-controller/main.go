@@ -86,7 +86,7 @@ func setupWebhooks(mgr ctrl.Manager) error {
 	return nil
 }
 
-//nolint:funlen // standard kubebuilder main with flag parsing
+//nolint:funlen,gocyclo // standard kubebuilder main with flag parsing
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string

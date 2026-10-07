@@ -101,11 +101,13 @@ func (ec *evalContext) addonMap() (map[string]any, error) {
 	data, err := json.Marshal(ec.targetAddon)
 	if err != nil {
 		ec.targetErr = fmt.Errorf("marshal addon: %w", err)
+
 		return nil, ec.targetErr
 	}
 	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		ec.targetErr = fmt.Errorf("unmarshal addon: %w", err)
+
 		return nil, ec.targetErr
 	}
 	ec.targetMap = m
@@ -127,8 +129,10 @@ func (e *RuleEvaluator) resolveSource(
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			ec.sources[key] = sourceEntry{found: false}
+
 			return nil, false, nil
 		}
+
 		return nil, false, err
 	}
 
@@ -146,19 +150,16 @@ func (e *RuleEvaluator) getSource(
 	gvk := schema.FromAPIVersionAndKind(src.APIVersion, src.Kind)
 	key := types.NamespacedName{Name: src.Name, Namespace: src.Namespace}
 
-	if e.cacheBackedGK[gvk.GroupKind()] {
-		if obj, err := e.client.Scheme().New(gvk); err == nil {
-			if cObj, ok := obj.(client.Object); ok {
-				if getErr := e.client.Get(ctx, key, cObj); getErr != nil {
-					return nil, getErr
-				}
-				m, convErr := runtime.DefaultUnstructuredConverter.ToUnstructured(cObj)
-				if convErr != nil {
-					return nil, fmt.Errorf("convert %s/%s to map: %w", src.Kind, src.Name, convErr)
-				}
-				return m, nil
-			}
+	if obj := e.newTypedObject(gvk); obj != nil {
+		if err := e.client.Get(ctx, key, obj); err != nil {
+			return nil, err
 		}
+		m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+		if err != nil {
+			return nil, fmt.Errorf("convert %s/%s to map: %w", src.Kind, src.Name, err)
+		}
+
+		return m, nil
 	}
 
 	u := &unstructured.Unstructured{}
@@ -168,6 +169,20 @@ func (e *RuleEvaluator) getSource(
 	}
 
 	return u.Object, nil
+}
+
+// newTypedObject returns an empty typed object for a cache-backed kind, or nil when the kind is read unstructured.
+func (e *RuleEvaluator) newTypedObject(gvk schema.GroupVersionKind) client.Object {
+	if !e.cacheBackedGK[gvk.GroupKind()] {
+		return nil
+	}
+	obj, err := e.client.Scheme().New(gvk)
+	if err != nil {
+		return nil
+	}
+	cObj, _ := obj.(client.Object)
+
+	return cObj
 }
 
 func (e *RuleEvaluator) EvaluateRules(
@@ -265,28 +280,44 @@ func (e *RuleEvaluator) evaluateRule(
 	return true, "All conditions satisfied", nil
 }
 
+// criterionObject resolves what a criterion is evaluated against; a non-empty string is the
+// reason the referenced source is absent, which means "does not match" rather than an error.
+func (e *RuleEvaluator) criterionObject(
+	ctx context.Context,
+	criterion addonsv1alpha1.Criterion,
+	ec *evalContext,
+) (any, string, error) {
+	if criterion.Source == nil {
+		m, err := ec.addonMap()
+		if err != nil {
+			return nil, "", err
+		}
+
+		return m, "", nil
+	}
+
+	resolved, found, err := e.resolveSource(ctx, criterion.Source, ec)
+	if err != nil {
+		return nil, "", fmt.Errorf("get resource %s/%s: %w", criterion.Source.Kind, criterion.Source.Name, err)
+	}
+	if !found {
+		return nil, fmt.Sprintf("Resource %s/%s not found", criterion.Source.Kind, criterion.Source.Name), nil
+	}
+
+	return resolved, "", nil
+}
+
 func (e *RuleEvaluator) evaluateCriterion(
 	ctx context.Context,
 	criterion addonsv1alpha1.Criterion,
 	ec *evalContext,
 ) (bool, string, error) {
-	var obj any
-
-	if criterion.Source != nil {
-		resolved, found, err := e.resolveSource(ctx, criterion.Source, ec)
-		if err != nil {
-			return false, "", fmt.Errorf("get resource %s/%s: %w", criterion.Source.Kind, criterion.Source.Name, err)
-		}
-		if !found {
-			return false, fmt.Sprintf("Resource %s/%s not found", criterion.Source.Kind, criterion.Source.Name), nil
-		}
-		obj = resolved
-	} else {
-		m, err := ec.addonMap()
-		if err != nil {
-			return false, "", err
-		}
-		obj = m
+	obj, missing, err := e.criterionObject(ctx, criterion, ec)
+	if err != nil {
+		return false, "", err
+	}
+	if missing != "" {
+		return false, missing, nil
 	}
 
 	actualValue, found, err := jsonpath.ExtractString(obj, criterion.JSONPath)

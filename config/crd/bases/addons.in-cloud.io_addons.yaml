@@ -576,6 +576,12 @@ spec:
                   by the controller.
                 format: int64
                 type: integer
+              observedPhaseValuesSelectorHash:
+                description: |-
+                  ObservedPhaseValuesSelectorHash identifies the phaseValuesSelector that the
+                  Synced and Healthy conditions were last evaluated against.
+                  Empty until the Application has been evaluated with a non-empty phaseValuesSelector.
+                type: string
               phaseValuesSelector:
                 description: |-
                   PhaseValuesSelector contains dynamic selectors injected by AddonPhase.

@@ -39,6 +39,7 @@ import (
 	addonsv1alpha1 "addons-operator/api/v1alpha1"
 	"addons-operator/internal/controller/conditions"
 	"addons-operator/internal/controller/rules"
+	"addons-operator/internal/controller/values"
 )
 
 const (
@@ -258,13 +259,18 @@ func (r *AddonPhaseReconciler) clearAddonStatus(ctx context.Context, name string
 	})
 }
 
-// latchDeployedRules stamps Deployed=true on currently-matched rules
+// latchDeployedRules stamps Deployed=true on currently-matched rules once the
+// addon's Synced/Healthy conditions were computed for the current selectors.
 func latchDeployedRules(
 	ruleStatuses []addonsv1alpha1.RuleStatus,
 	activeSelectors []addonsv1alpha1.ValuesSelector,
 	addon *addonsv1alpha1.Addon,
 ) {
 	if !selectorsEqual(addon.Status.PhaseValuesSelector, activeSelectors) {
+		return
+	}
+	observed := addon.Status.ObservedPhaseValuesSelectorHash
+	if observed == "" || observed != values.SelectorsHash(activeSelectors) {
 		return
 	}
 	if !meta.IsStatusConditionTrue(addon.Status.Conditions, conditions.TypeSynced) {
