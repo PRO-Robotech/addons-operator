@@ -1611,3 +1611,82 @@ func TestApplicationBuilder_UpdateSpec_Finalizer(t *testing.T) {
 		assert.NotContains(t, existing.Finalizers, "resources-finalizer.argocd.argoproj.io")
 	})
 }
+
+// K8S-1228: политика повтора переносится в spec.syncPolicy.retry; без неё поля нет.
+func TestApplicationBuilder_Build_WithSyncRetry(t *testing.T) {
+	builder := NewApplicationBuilder()
+	factor := int64(2)
+	addon := &addonsv1alpha1.Addon{
+		ObjectMeta: metav1.ObjectMeta{Name: "retry-addon"},
+		Spec: addonsv1alpha1.AddonSpec{
+			Chart:           "test-chart",
+			RepoURL:         "https://charts.example.com",
+			Version:         "1.0.0",
+			TargetCluster:   "in-cluster",
+			TargetNamespace: "default",
+			Backend: addonsv1alpha1.BackendSpec{
+				Type:      "argocd",
+				Namespace: "argocd",
+				SyncPolicy: &addonsv1alpha1.SyncPolicy{
+					Automated: &addonsv1alpha1.AutomatedSync{Prune: true},
+					Retry: &addonsv1alpha1.RetryStrategy{
+						Limit:   12,
+						Backoff: &addonsv1alpha1.Backoff{Duration: "30s", Factor: &factor, MaxDuration: "10m"},
+					},
+				},
+			},
+		},
+	}
+	app, err := builder.Build(addon, "argocd", nil)
+	require.NoError(t, err)
+	require.NotNil(t, app.Spec.SyncPolicy)
+	require.NotNil(t, app.Spec.SyncPolicy.Retry)
+	assert.Equal(t, int64(12), app.Spec.SyncPolicy.Retry.Limit)
+	require.NotNil(t, app.Spec.SyncPolicy.Retry.Backoff)
+	assert.Equal(t, "30s", app.Spec.SyncPolicy.Retry.Backoff.Duration)
+	require.NotNil(t, app.Spec.SyncPolicy.Retry.Backoff.Factor)
+	assert.Equal(t, int64(2), *app.Spec.SyncPolicy.Retry.Backoff.Factor)
+	assert.Equal(t, "10m", app.Spec.SyncPolicy.Retry.Backoff.MaxDuration)
+
+	addon.Spec.Backend.SyncPolicy.Retry = nil
+	app, err = builder.Build(addon, "argocd", nil)
+	require.NoError(t, err)
+	assert.Nil(t, app.Spec.SyncPolicy.Retry)
+}
+
+// K8S-1228: умолчание оператора применяется, если у Addon нет своего retry; свой — важнее;
+// без syncPolicy умолчание не ставится.
+func TestApplicationBuilder_DefaultSyncRetry(t *testing.T) {
+	factor := int64(2)
+	def := &addonsv1alpha1.RetryStrategy{Limit: 12, Backoff: &addonsv1alpha1.Backoff{Duration: "30s", Factor: &factor, MaxDuration: "10m"}}
+	mk := func(sp *addonsv1alpha1.SyncPolicy) *addonsv1alpha1.Addon {
+		return &addonsv1alpha1.Addon{
+			ObjectMeta: metav1.ObjectMeta{Name: "a"},
+			Spec: addonsv1alpha1.AddonSpec{
+				Chart: "c", RepoURL: "https://example.com", Version: "1.0.0",
+				TargetCluster: "in-cluster", TargetNamespace: "default",
+				Backend: addonsv1alpha1.BackendSpec{Type: "argocd", Namespace: "argocd", SyncPolicy: sp},
+			},
+		}
+	}
+	b := NewApplicationBuilder(WithDefaultSyncRetry(def))
+
+	app, err := b.Build(mk(&addonsv1alpha1.SyncPolicy{Automated: &addonsv1alpha1.AutomatedSync{Prune: true}}), "argocd", nil)
+	require.NoError(t, err)
+	require.NotNil(t, app.Spec.SyncPolicy.Retry)
+	assert.Equal(t, int64(12), app.Spec.SyncPolicy.Retry.Limit)
+	assert.Equal(t, "10m", app.Spec.SyncPolicy.Retry.Backoff.MaxDuration)
+
+	app, err = b.Build(mk(&addonsv1alpha1.SyncPolicy{Retry: &addonsv1alpha1.RetryStrategy{Limit: 3}}), "argocd", nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), app.Spec.SyncPolicy.Retry.Limit)
+	assert.Nil(t, app.Spec.SyncPolicy.Retry.Backoff)
+
+	app, err = b.Build(mk(nil), "argocd", nil)
+	require.NoError(t, err)
+	assert.Nil(t, app.Spec.SyncPolicy)
+
+	app, err = NewApplicationBuilder().Build(mk(&addonsv1alpha1.SyncPolicy{}), "argocd", nil)
+	require.NoError(t, err)
+	assert.Nil(t, app.Spec.SyncPolicy.Retry)
+}

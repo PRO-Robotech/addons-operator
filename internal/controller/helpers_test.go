@@ -23,6 +23,7 @@ import (
 	"time"
 
 	argocdv1alpha1 "github.com/argoproj/argo-cd/v2/pkg/apis/application/v1alpha1"
+	"github.com/argoproj/gitops-engine/pkg/health"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -269,6 +270,38 @@ func waitForPhaseRuleMatched(name, ruleName string, matched bool) {
 
 		return !matched // Rule not found, return opposite
 	}, timeout, interval).Should(BeTrue())
+}
+
+// markApplicationSyncedHealthy simulates Argo CD comparing the current spec and reporting Synced+Healthy.
+func markApplicationSyncedHealthy(name, namespace string) {
+	EventuallyWithOffset(1, func() error {
+		app := &argocdv1alpha1.Application{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, app); err != nil {
+			return err
+		}
+		app.Status.Sync.Status = argocdv1alpha1.SyncStatusCodeSynced
+		app.Status.Health.Status = health.HealthStatusHealthy
+		if app.Spec.Source != nil {
+			app.Status.Sync.ComparedTo.Source = *app.Spec.Source
+		}
+
+		return k8sClient.Update(ctx, app)
+	}, timeout, interval).Should(Succeed())
+}
+
+// phaseRuleDeployed reports rule.Deployed, treating read errors as deployed so Consistently fails loudly.
+func phaseRuleDeployed(name, ruleName string) bool {
+	phase := &addonsv1alpha1.AddonPhase{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, phase); err != nil {
+		return true
+	}
+	for _, r := range phase.Status.RuleStatuses {
+		if r.Name == ruleName {
+			return r.Deployed
+		}
+	}
+
+	return false
 }
 
 // waitForAddonPhaseValuesSelector waits for an Addon to have phaseValuesSelector.

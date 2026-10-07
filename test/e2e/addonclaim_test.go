@@ -399,7 +399,12 @@ var _ = Describe("AddonClaim", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(claim.Status.ExternalManagedControlPlane).To(HaveValue(BeTrue()))
 
-			By("Verifying version from variables")
+			By("Waiting for the remote Addon to be confirmed reconciled")
+			waitForClaimCondition(claimName, testNamespace, "Ready", metav1.ConditionTrue)
+
+			By("Verifying the version is published together with Ready")
+			claim, err = getAddonClaim(claimName, testNamespace)
+			Expect(err).NotTo(HaveOccurred())
 			Expect(claim.Status.Version).To(Equal("6.5.0"))
 
 			By("Verifying initialized fields are set")

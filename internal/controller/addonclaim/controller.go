@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -45,15 +46,17 @@ import (
 )
 
 const (
-	DefaultPollingInterval   = 15 * time.Second
-	requeueIntervalDegraded  = 60 * time.Second
-	finalizerName            = "addons.in-cloud.io/addonclaim-finalizer"
-	secretKubeconfigKey      = "value"
-	addonLabelKey            = "addons.in-cloud.io/addon"
-	valuesLabelKey           = "addons.in-cloud.io/values"
-	valuesLabelValue         = "claim"
-	pauseAnnotationKey       = "addons.in-cloud.io/paused"
-	pauseAnnotationValueTrue = "true"
+	DefaultPollingInterval = 15 * time.Second
+	// Опрос готовности control-plane клиента после создания его Application (K8S-1229).
+	externalStatusPollInterval = 2 * time.Second
+	requeueIntervalDegraded    = 60 * time.Second
+	finalizerName              = "addons.in-cloud.io/addonclaim-finalizer"
+	secretKubeconfigKey        = "value"
+	addonLabelKey              = "addons.in-cloud.io/addon"
+	valuesLabelKey             = "addons.in-cloud.io/values"
+	valuesLabelValue           = "claim"
+	pauseAnnotationKey         = "addons.in-cloud.io/paused"
+	pauseAnnotationValueTrue   = "true"
 
 	// Condition types specific to AddonClaim.
 	TypeTemplateRendered = "TemplateRendered"
@@ -265,21 +268,13 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	addon := rctx.addon
 
 	if err := r.reconcileRemoteAddonValue(ctx, rc, claim, addon.Name); err != nil {
-		r.RemoteClients.RecordFailure(rctx.cacheKey)
-		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
-		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync AddonValue to remote cluster")
-		r.Recorder.Eventf(claim, "Warning", "AddonValueSyncFailed", "Failed to sync AddonValue: %v", err)
-		result, updateErr := r.updateStatus(ctx, rctx)
+		result, updateErr := r.handleRemoteSyncError(ctx, rctx, err, "AddonValue")
 
 		return result, updateErr, true
 	}
 
 	if err := r.reconcileRemoteAddon(ctx, rc, addon); err != nil {
-		r.RemoteClients.RecordFailure(rctx.cacheKey)
-		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
-		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, "Failed to sync Addon to remote cluster")
-		r.Recorder.Eventf(claim, "Warning", "AddonSyncFailed", "Failed to sync Addon: %v", err)
-		result, updateErr := r.updateStatus(ctx, rctx)
+		result, updateErr := r.handleRemoteSyncError(ctx, rctx, err, "Addon")
 
 		return result, updateErr, true
 	}
@@ -291,6 +286,37 @@ func (r *Reconciler) syncRemoteResources(ctx context.Context, rctx *reconcileCon
 	r.syncExternalStatus(claim)
 
 	return ctrl.Result{}, nil, false
+}
+
+// handleRemoteSyncError разбирает отказ записи в удалённый кластер по классу (K8S-1087).
+// Общую паузу кластера двигает только недоступность: «CRD ещё нет», отказ вебхука и конфликт
+// штатны при сборке, и пауза от них задерживала client CP всех заявок кластера на минуты.
+func (r *Reconciler) handleRemoteSyncError(ctx context.Context, rctx *reconcileContext, err error, kind string) (ctrl.Result, error) {
+	claim := rctx.claim
+	cm := rctx.cm
+
+	switch classifyRemoteError(err) {
+	case remoteNotReady:
+		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteNotReady, err.Error())
+		cm.SetProgressing(ReasonRemoteNotReady, ReasonRemoteNotReady,
+			fmt.Sprintf("Remote cluster is not ready to accept %s yet: %v", kind, err))
+		r.Recorder.Eventf(claim, "Normal", kind+"SyncDeferred", "Remote cluster not ready for %s, retrying: %v", kind, err)
+
+		return r.updateStatusAndRequeue(ctx, rctx, notReadyRequeue(cm.GetCondition(TypeAddonSynced), time.Now()))
+	case remoteRejected:
+		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteRequestInvalid, err.Error())
+		cm.SetDegraded(ReasonRemoteRequestInvalid, ReasonRemoteRequestInvalid, "Remote cluster rejected "+kind)
+		r.Recorder.Eventf(claim, "Warning", kind+"SyncFailed", "Failed to sync %s: %v", kind, err)
+
+		return r.updateStatus(ctx, rctx)
+	default:
+		r.RemoteClients.RecordFailure(rctx.cacheKey)
+		cm.SetCondition(TypeAddonSynced, false, ReasonRemoteOperationFail, err.Error())
+		cm.SetDegraded(ReasonRemoteOperationFail, ReasonRemoteOperationFail, fmt.Sprintf("Failed to sync %s to remote cluster", kind))
+		r.Recorder.Eventf(claim, "Warning", kind+"SyncFailed", "Failed to sync %s: %v", kind, err)
+
+		return r.updateStatus(ctx, rctx)
+	}
 }
 
 // determineRequeue updates status and decides whether to requeue based on remote Addon readiness.
@@ -308,7 +334,21 @@ func (r *Reconciler) determineRequeue(ctx context.Context, rctx *reconcileContex
 
 	cm.SetProgressing(ReasonAddonNotReady, pkgconditions.ReasonReconciling, "Waiting for remote Addon to become ready")
 
-	return r.updateStatusAndRequeue(ctx, rctx, r.pollingInterval())
+	return r.updateStatusAndRequeue(ctx, rctx, r.readinessPollInterval(claim))
+}
+
+// readinessPollInterval — частый опрос только у заявки, чью готовность читает CAPI
+// (external-status, control-plane клиента), и только на последнем отрезке: удалённый
+// Application уже создан, ждать осталось развёртывания. Готовность client-cp лежит на пути
+// сборки, и опрос раз в 15 с добавлял к нему в среднем 7 с (K8S-1229).
+func (r *Reconciler) readinessPollInterval(claim *addonsv1alpha1.AddonClaim) time.Duration {
+	if claim.Annotations["external-status/type"] == "" || claim.Status.Deployed ||
+		claim.Status.RemoteAddonStatus == nil ||
+		!meta.IsStatusConditionTrue(claim.Status.RemoteAddonStatus.Conditions, "ApplicationCreated") {
+		return r.pollingInterval()
+	}
+
+	return externalStatusPollInterval
 }
 
 func (r *Reconciler) reconcileDelete(ctx context.Context, claim *addonsv1alpha1.AddonClaim) (ctrl.Result, error) {

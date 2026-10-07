@@ -642,6 +642,19 @@ func TestComputeHash_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "marshal values")
 }
 
+func TestSelectorsHash(t *testing.T) {
+	a := addonsv1alpha1.ValuesSelector{Name: "a", Priority: 10, MatchLabels: map[string]string{"x": "1", "y": "2"}}
+	aReordered := addonsv1alpha1.ValuesSelector{Name: "a", Priority: 10, MatchLabels: map[string]string{"y": "2", "x": "1"}}
+	b := addonsv1alpha1.ValuesSelector{Name: "b", Priority: 20, MatchLabels: map[string]string{"z": "3"}}
+
+	assert.Empty(t, SelectorsHash(nil))
+	assert.Empty(t, SelectorsHash([]addonsv1alpha1.ValuesSelector{}))
+	assert.NotEmpty(t, SelectorsHash([]addonsv1alpha1.ValuesSelector{a}))
+	assert.Equal(t, SelectorsHash([]addonsv1alpha1.ValuesSelector{a}), SelectorsHash([]addonsv1alpha1.ValuesSelector{aReordered}))
+	assert.NotEqual(t, SelectorsHash([]addonsv1alpha1.ValuesSelector{a}), SelectorsHash([]addonsv1alpha1.ValuesSelector{a, b}))
+	assert.NotEqual(t, SelectorsHash([]addonsv1alpha1.ValuesSelector{a, b}), SelectorsHash([]addonsv1alpha1.ValuesSelector{b, a}))
+}
+
 // Tests for exact match labels (only addons.in-cloud.io/ prefix labels are compared)
 
 func TestFilterAddonLabels(t *testing.T) {

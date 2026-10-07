@@ -206,6 +206,7 @@ spec:
 | `observedGeneration` | Последнее обработанное поколение spec |
 | `valuesHash` | Хеш итоговых merged values |
 | `phaseValuesSelector` | Динамические селекторы от AddonPhase |
+| `observedPhaseValuesSelectorHash` | Хеш `phaseValuesSelector`, для которого вычислены `Synced`/`Healthy`; AddonPhase по нему отличает актуальные conditions от устаревших |
 | `conditions` | Текущее состояние Addon (см. Conditions выше) |
 
 ```yaml
